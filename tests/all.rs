@@ -351,6 +351,49 @@ fn can_request_a_lot() {
 }
 
 #[test]
+fn can_request_a_lot_pedantic() {
+    elog!();
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+
+    let connect_cmd = ConnectCommand::builder().pedantic(true).build().unwrap();
+    let options = NatsClientOptions::builder()
+        .connect_command(connect_cmd)
+        .cluster_uri("127.0.0.1:4222")
+        .build()
+        .unwrap();
+
+    let fut_requester = NatsClient::from_options(options.clone())
+        .and_then(|client| client.connect())
+        .and_then(|client| {
+            let mut fut_vec = vec![];
+
+            for _ in 0..ROUNDTRIP_COUNT / 100 {
+                fut_vec.push(client.request("foo-requests".into(), "foo".into()).map_err(|_| ()));
+            }
+
+            future::join_all(fut_vec).map_err(|_| NatsError::InnerBrokenChain)
+        }).map(|_| ());
+
+    let fut_answerer = NatsClient::from_options(options.clone())
+        .and_then(|client| client.connect())
+        .and_then(|client| {
+            let sub_command = SubCommand::builder().subject("foo-requests").build().unwrap();
+            client
+                .subscribe(sub_command)
+                .map_err(|_| NatsError::InnerBrokenChain)
+                .and_then(move |sub_stream| spawn_responder(client, sub_stream))
+        });
+
+    let (tx, rx) = oneshot::channel();
+    runtime.spawn(fut_requester.then(|r| tx.send(r).map_err(|_| ())));
+    runtime.spawn(fut_answerer.map_err(|_| ()));
+    let connection_result = rx.wait().expect("Cannot wait for a result");
+    let _ = runtime.shutdown_now().wait();
+    debug!("can_request_a_lot::connection_result {:#?}", connection_result);
+    assert!(connection_result.is_ok());
+}
+
+#[test]
 fn can_pong_to_ping() {
     elog!();
     let mut runtime = tokio::runtime::Runtime::new().unwrap();

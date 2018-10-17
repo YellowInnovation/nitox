@@ -102,7 +102,6 @@ extern crate url;
 mod error;
 
 // TODO: Handle verbose mode
-// TODO: Handle pedantic mode
 // TODO: Switch parsing to using `nom`
 // TODO: Support NATS Streaming Server
 

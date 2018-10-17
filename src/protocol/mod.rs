@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 /// Trait used to implement a common interface for implementing new commands
-pub(crate) trait Command {
+pub trait Command {
     /// Command name as a static byte slice
     const CMD_NAME: &'static [u8];
     /// Encodes the command into bytes
@@ -52,6 +52,7 @@ pub mod commands {
         client::{connect::*, pub_cmd::*, sub_cmd::*, unsub_cmd::*},
         server::{info::*, message::*, server_error::ServerError},
     };
+    pub use Command;
 }
 
 #[cfg(test)]
