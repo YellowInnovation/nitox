@@ -23,6 +23,10 @@ readme = "README.md"
 repository = "https://github.com/YellowInnovation/nitox"
 version = "0.1.6"
 
+[[bench]]
+name = "nitox_parser_benchmark"
+harness = false
+
 [dependencies]
 bytes = "0.4"
 derive_builder = "0.6"
@@ -45,3 +49,4 @@ url = "1.7"
 [dev-dependencies]
 tokio = "0.1"
 env_logger = "0.5"
+criterion = "0.2"
