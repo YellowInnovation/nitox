@@ -7,9 +7,9 @@ use futures::{
     sync::mpsc,
     Future,
 };
+use hashbrown::HashMap;
 use parking_lot::RwLock;
 use std::{
-    collections::HashMap,
     net::{SocketAddr, ToSocketAddrs},
     str::FromStr,
     sync::Arc,
