@@ -99,17 +99,24 @@ extern crate tokio_tcp;
 extern crate tokio_tls;
 extern crate url;
 
+#[cfg(feature = "nats-streaming")]
+extern crate prost;
+#[cfg(feature = "nats-streaming")]
+#[macro_use]
+extern crate prost_derive;
+
 #[macro_use]
 mod error;
 
 // TODO: Handle verbose mode
-// TODO: Switch parsing to using `nom`
-// TODO: Support NATS Streaming Server
 
 pub use self::error::*;
 pub mod codec;
 mod protocol;
 pub use self::protocol::*;
+
+#[cfg(feature = "nats-streaming")]
+pub mod streaming;
 
 pub(crate) mod net;
 
