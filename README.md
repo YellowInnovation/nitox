@@ -33,6 +33,13 @@ nitox = "0.1"
 
 ## Usage
 
+### Client setup
+
+In order to subscribe to topics or publish messages, we first need to create a client.
+
+The first thing a client needs to do is send a CONNECT command to the server,
+as you can see below :
+
 ```rust
 extern crate nitox;
 extern crate futures;
@@ -58,6 +65,34 @@ fn connect_to_nats() -> impl Future<Item = NatsClient, Error = NatsError> {
             future::ok(client)
         })
 }
+```
+
+### Subscribe to a channel
+
+Once our nats client has been created, we can now subscribe to channels, and get ready to handle messages.
+
+In order to subscribe to channels, we can use the SubCommand builder :
+
+```rust
+    let ready_to_listen_client = connect_to_nats()
+        .and_then(|client| {
+            client.subscribe(SubCommand::builder().subject("MyTopic").build().unwrap())
+        });
+```
+
+Our client is now listening to messages being sent in the "MyTopic" channel.
+
+Incoming messages are being handles as a stream, so it might be a good idea to take a step back and [learn more about futures and streams](https://dev.to/mindflavor/rust-futures-an-uneducated-short-and-hopefully-not-boring-tutorial---part-1-3k3).
+
+### Sending a message to a channel
+
+As we did for topic subscription, in order to send messages to channels using a connected client, we can use the PubCommand builder :
+
+```rust
+    connect_to_nats().and_then(|client| {
+            client.publish(PubCommand::builder().subject("MyTopic").payload("Hello world!").build().unwrap())
+        });
+
 ```
 
 ## License
