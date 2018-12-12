@@ -12,6 +12,7 @@ include = [
     "**/*.rs",
     "Cargo.toml",
 ]
+exclude = ["examples/*"]
 keywords = [
     "nats",
     "async",
@@ -53,3 +54,6 @@ version = "1.0"
 criterion = "0.2"
 env_logger = "0.6"
 tokio = "0.1"
+
+[[example]]
+name = "request_with_reply"

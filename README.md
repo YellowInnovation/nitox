@@ -60,6 +60,14 @@ fn connect_to_nats() -> impl Future<Item = NatsClient, Error = NatsError> {
 }
 ```
 
+## Examples
+
+Check out the examples and run them using cargo :
+
+```bash
+$ cargo run --example request_with_reply.rs
+```
+
 ## License
 
 Licensed under either of these:
