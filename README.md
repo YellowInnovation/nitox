@@ -73,6 +73,7 @@ Check out the examples and run them using cargo :
 ```bash
 $ cargo run --example publish # Publish a message and log it in a subscriber
 $ cargo run --example request_with_reply # Publish a request and receive a response
+$ cargo run --example subscribe_ten_messages # Subscribe to 10 messages, send 15 and notice only 10 of them have been handled
 ```
 
 ## License

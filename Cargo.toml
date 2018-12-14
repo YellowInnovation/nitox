@@ -57,3 +57,9 @@ tokio = "0.1"
 
 [[example]]
 name = "request_with_reply"
+
+[[example]]
+name = "publish"
+
+[[example]]
+name = "subscribe_ten_messages"
