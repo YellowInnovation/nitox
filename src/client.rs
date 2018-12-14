@@ -350,7 +350,6 @@ impl NatsClient {
                     if let Some(count) = delete.take() {
                         debug!(target: "nitox", "Deleted stream for sid {} at count {}", sid, count);
                         stx.remove(&sid);
-                        return Err(NatsError::SubscriptionReachedMaxMsgs(count));
                     }
                 }
 
