@@ -62,10 +62,17 @@ fn connect_to_nats() -> impl Future<Item = NatsClient, Error = NatsError> {
 
 ## Examples
 
+In order to run the examples, you need a nats server listening to port 4222 on your localhost. If you have docker set up on your computer, you can run a nats server image in debug mode with this command :
+
+```bash
+$ docker run -p 4222:4222 nats -DV # -DV is for debug and verbose mode
+```
+
 Check out the examples and run them using cargo :
 
 ```bash
-$ cargo run --example request_with_reply.rs
+$ cargo run --example publish # Publish a message and log it in a subscriber
+$ cargo run --example request_with_reply # Publish a request and receive a response
 ```
 
 ## License
