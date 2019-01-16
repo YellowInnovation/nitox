@@ -1,7 +1,6 @@
-pub(crate) mod streaming_protocol;
-
 pub mod error;
 mod streaming_client;
+pub mod streaming_protocol;
 mod subscription;
 
 pub mod client {
