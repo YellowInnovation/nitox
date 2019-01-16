@@ -107,7 +107,8 @@ impl NatsClient {
                 } else {
                     future::ok(Either::A(connect(cluster_sa)))
                 }
-            }).and_then(|either| either)
+            })
+            .and_then(|either| either)
             .and_then(move |connection| {
                 let (sink, stream): (NatsSink, NatsStream) = connection.split();
                 let (rx, other_rx) = NatsClientMultiplexer::new(stream);
@@ -151,7 +152,8 @@ impl NatsClient {
                             }
 
                             future::ok(())
-                        }).into_future()
+                        })
+                        .into_future()
                         .map_err(|_| ()),
                 );
 
@@ -179,13 +181,24 @@ impl NatsClient {
 
     /// Send a UNSUB command to the server and de-register stream in the multiplexer
     pub fn unsubscribe(&self, cmd: UnsubCommand) -> impl Future<Item = (), Error = NatsError> + Send + Sync {
+        let mut unsub_now = true;
         if let Some(max) = cmd.max_msgs {
             if let Some(mut s) = (*self.rx.subs_tx.write()).get_mut(&cmd.sid) {
                 s.max_count = Some(max);
+                unsub_now = false;
             }
         }
 
-        self.tx.send(Op::UNSUB(cmd))
+        let sid = cmd.sid.clone();
+        let rx_arc = Arc::clone(&self.rx);
+
+        self.tx.send(Op::UNSUB(cmd)).and_then(move |_| {
+            if unsub_now {
+                rx_arc.remove_sid(&sid);
+            }
+
+            future::ok(())
+        })
     }
 
     /// Send a SUB command and register subscription stream in the multiplexer and return that `Stream` in a future
@@ -217,7 +230,6 @@ impl NatsClient {
                     if let Some(count) = delete.take() {
                         debug!(target: "nitox", "Deleted stream for sid {} at count {}", sid, count);
                         stx.remove(&sid);
-                        return Err(NatsError::SubscriptionReachedMaxMsgs(count));
                     }
                 }
 
@@ -270,6 +282,8 @@ impl NatsClient {
             .inspect(|msg| debug!(target: "nitox", "Request saw msg in multiplexed stream {:#?}", msg))
             .take(1)
             .into_future()
+            // This unwrap is safe because we take only one message from the stream which means
+            // we'll always have one and only one message there
             .map(|(surely_message, _)| surely_message.unwrap())
             .map_err(|(e, _)| e)
             .and_then(move |msg| {

@@ -1,5 +1,8 @@
 use codec::OpCodec;
-use futures::prelude::*;
+use futures::{
+    future::{self, Either},
+    prelude::*,
+};
 use native_tls::TlsConnector as NativeTlsConnector;
 use protocol::Op;
 use std::net::SocketAddr;
@@ -30,10 +33,19 @@ impl NatsConnectionInner {
         host: &str,
         socket: TcpStream,
     ) -> impl Future<Item = TlsStream<TcpStream>, Error = NatsError> {
-        let tls_connector = NativeTlsConnector::builder().build().unwrap();
+        let tls_connector = match NativeTlsConnector::builder()
+            .build()
+            .map_err(|err| Either::B(future::err(err.into())))
+        {
+            Ok(connector) => connector,
+            Err(e) => {
+                return e;
+            }
+        };
+
         let tls_stream: TlsConnector = tls_connector.into();
         debug!(target: "nitox", "Connecting to {} through TLS over TCP", host);
-        tls_stream.connect(&host, socket).from_err()
+        Either::A(tls_stream.connect(&host, socket).from_err())
     }
 }
 

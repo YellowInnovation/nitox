@@ -12,6 +12,7 @@ include = [
     "**/*.rs",
     "Cargo.toml",
 ]
+exclude = ["examples/*"]
 keywords = [
     "nats",
     "async",
@@ -21,7 +22,7 @@ license = "MIT/Apache-2.0"
 name = "nitox"
 readme = "README.md"
 repository = "https://github.com/YellowInnovation/nitox"
-version = "0.1.8"
+version = "0.1.10"
 build = "build.rs"
 
 [package.metadata.docs.rs]
@@ -43,8 +44,8 @@ failure_derive = "0.1"
 futures = "0.1"
 log = "0.4"
 native-tls = "0.2"
-parking_lot = "0.6"
-rand = "0.5"
+parking_lot = "0.7"
+rand = "0.6"
 serde = "1.0"
 serde_derive = "1.0"
 tokio-codec = "0.1"
@@ -61,8 +62,17 @@ version = "1.0"
 
 [dev-dependencies]
 criterion = "0.2"
-env_logger = "0.5"
+env_logger = "0.6"
 tokio = "0.1"
 
 [build-dependencies]
 prost-build = { version = "0.4", optional = true }
+
+[[example]]
+name = "request_with_reply"
+
+[[example]]
+name = "publish"
+
+[[example]]
+name = "subscribe_ten_messages"

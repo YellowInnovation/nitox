@@ -60,12 +60,12 @@ impl ConnectCommandBuilder {
     fn default_ver(&self) -> Result<String, String> {
         match ::std::env::var("CARGO_PKG_VERSION") {
             Ok(v) => Ok(v),
-            Err(_) => Err("Package version not found in env".into()),
+            Err(_) => Ok("0.1.x".into()),
         }
     }
 
     fn default_lang(&self) -> Result<String, String> {
-        Ok(String::from("rust"))
+        Ok("rust".into())
     }
 }
 

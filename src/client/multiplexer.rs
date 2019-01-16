@@ -75,6 +75,9 @@ impl NatsClientMultiplexer {
     }
 
     pub fn remove_sid(&self, sid: &str) {
-        (*self.subs_tx.write()).remove(sid);
+        if let Some(mut tx) = (*self.subs_tx.write()).remove(sid) {
+            let _ = tx.tx.close();
+            drop(tx);
+        }
     }
 }

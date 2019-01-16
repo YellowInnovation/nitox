@@ -50,7 +50,8 @@ fn create_tcp_mock(
                         .build()
                         .unwrap(),
                 ))
-            }).and_then(|socket| socket.send(Op::PING))
+            })
+            .and_then(|socket| socket.send(Op::PING))
             .and_then(move |socket| {
                 let (sink, stream) = socket.split();
                 let (tx, rx) = mpsc::unbounded();
@@ -108,7 +109,8 @@ fn create_tcp_mock(
 
                     future::ok(())
                 })
-            }).into_future()
+            })
+            .into_future()
             .map(|_| ())
             .map_err(|_| ()),
     );
@@ -233,7 +235,9 @@ fn can_subscribe_for_1000_messages() {
                     );
                 }
 
-                future::join_all(fut_vec).and_then(|_| stream.for_each(|_| future::ok(())))
+                future::join_all(fut_vec)
+                    .from_err()
+                    .and_then(|_| stream.fold(None, |_, msg| future::ok::<Option<Message>, NatsError>(Some(msg))))
             })
         });
 
@@ -244,10 +248,7 @@ fn can_subscribe_for_1000_messages() {
     debug!(target: "nitox", "can_subscribe_for_1000_messages::connection_result {:#?}", connection_result);
     println!("{:?}", connection_result);
     match connection_result {
-        Ok(msg) => panic!("We shouldn't get Ok since we reached the end of the stream {:?}", msg),
-        Err(NatsError::SubscriptionReachedMaxMsgs(i)) => {
-            assert_eq!(i, 1000);
-        }
+        Ok(maybe_msg) => assert_eq!("bar-1000", maybe_msg.unwrap().payload),
         Err(e) => panic!("{}", e),
     }
 }
@@ -298,7 +299,8 @@ fn spawn_responder(
                     .unwrap();
 
                 client.publish(pub_command)
-            }).into_future()
+            })
+            .into_future()
             .map_err(|_| ()),
     );
 
@@ -329,7 +331,8 @@ fn can_request_a_lot() {
             }
 
             future::join_all(fut_vec).map_err(|_| NatsError::InnerBrokenChain)
-        }).map(|_| ());
+        })
+        .map(|_| ());
 
     let fut_answerer = NatsClient::from_options(options.clone())
         .and_then(|client| client.connect())
@@ -372,7 +375,8 @@ fn can_request_a_lot_pedantic() {
             }
 
             future::join_all(fut_vec).map_err(|_| NatsError::InnerBrokenChain)
-        }).map(|_| ());
+        })
+        .map(|_| ());
 
     let fut_answerer = NatsClient::from_options(options.clone())
         .and_then(|client| client.connect())
