@@ -72,7 +72,7 @@ impl From<NatsClient> for NatsStreamingClient {
         NatsStreamingClient {
             nats: Arc::new(client),
             ack: Arc::new(RwLock::new(HashMap::new())),
-            client_id: format!("nitox.streaming.{}", Self::generate_guid()),
+            client_id: format!("nitox_streaming_{}", Self::generate_guid()),
             cluster_id: None,
             config: Arc::new(RwLock::new(NatsStreamingClientConfiguration {
                 hb_subject: Self::generate_guid(),
