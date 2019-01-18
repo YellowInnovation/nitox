@@ -65,7 +65,8 @@ pub struct SubscribeOptions {
 /// Control whether a subscription will automatically or manually ack received messages.
 ///
 /// By default, subscriptions will be setup to automatically ack messages which are received on
-/// the stream. Use `Manual` mode to control the acks yourself.
+/// the stream. Use `Manual` mode to control the acks yourself. Simply call `StreamingMessage.ack`
+/// to ack a message.
 #[derive(Debug, Clone)]
 pub enum SubscriptionAckMode {
     Auto,
