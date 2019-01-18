@@ -29,12 +29,12 @@ impl StreamingSubscriptionSettings {
 pub struct StreamingSubscription {
     nats: Arc<NatsClient>,
     config: Arc<RwLock<NatsStreamingClientConfiguration>>,
-    rx: UnboundedReceiver<streaming::MsgProto>,
+    rx: UnboundedReceiver<StreamingMessage>,
     settings: StreamingSubscriptionSettings,
 }
 
 impl Stream for StreamingSubscription {
-    type Item = streaming::MsgProto;
+    type Item = StreamingMessage;
     type Error = NatsStreamingError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -46,7 +46,7 @@ impl StreamingSubscription {
     pub(crate) fn new(
         nats: Arc<NatsClient>,
         config: Arc<RwLock<NatsStreamingClientConfiguration>>,
-        rx: UnboundedReceiver<streaming::MsgProto>,
+        rx: UnboundedReceiver<StreamingMessage>,
         settings: StreamingSubscriptionSettings,
     ) -> Self {
         StreamingSubscription {
@@ -106,5 +106,33 @@ impl StreamingSubscription {
 
     pub fn close(self) -> impl Future<Item = (), Error = NatsStreamingError> {
         self.unsub_or_close(true)
+    }
+}
+
+/// A message coming from a subscription stream.
+#[derive(Debug)]
+pub struct StreamingMessage {
+    /// The protobuf message from the Nats stream.
+    pub proto: streaming::MsgProto,
+
+    /// The data used for acking this message.
+    ack: Option<(Arc<NatsClient>, commands::PubCommand)>,
+}
+
+impl StreamingMessage {
+    pub fn new(proto: streaming::MsgProto, ack: Option<(Arc<NatsClient>, commands::PubCommand)>) -> Self {
+        StreamingMessage{proto, ack}
+    }
+
+    /// Ack this message.
+    ///
+    /// If this message came from a stream configured with `SubscriptionAckMode::Auto`, then this
+    /// will be a no-op returning an immediately resolved `future::ok(())`.
+    pub fn ack(&mut self) -> impl Future<Item=(), Error=NatsStreamingError> {
+        if let Some((client, ack_cmd)) = self.ack.take() {
+            Either::A(client.publish(ack_cmd).from_err())
+        } else {
+            Either::B(future::ok(()))
+        }
     }
 }

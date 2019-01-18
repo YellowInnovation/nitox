@@ -1,10 +1,4 @@
-use super::{
-    client::{StreamingSubscription, StreamingSubscriptionSettings},
-    error::NatsStreamingError,
-    streaming_protocol as streaming,
-};
 use bytes::{Bytes, BytesMut};
-use client::NatsClient;
 use futures::{
     future::{self, Either},
     prelude::*,
@@ -12,11 +6,20 @@ use futures::{
 };
 use parking_lot::RwLock;
 use prost::Message;
-use protocol::commands;
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use NatsError;
+
+use crate::{
+    NatsError,
+    client::NatsClient,
+    protocol::commands,
+    streaming::{
+        client::{StreamingMessage, StreamingSubscription, StreamingSubscriptionSettings},
+        error::NatsStreamingError,
+        streaming_protocol as streaming,
+    },
+};
 
 static DISCOVER_PREFIX: &'static str = "_STAN.discover";
 static ACK_PREFIX: &'static str = "_NITOX.acks";
@@ -52,10 +55,27 @@ pub struct SubscribeOptions {
     max_in_flight: i32,
     #[builder(default = "30000")]
     ack_max_wait_in_secs: i32,
+    ack_mode: SubscriptionAckMode,
     durable_name: Option<String>,
     start_position: streaming::StartPosition,
     start_sequence: Option<u64>,
     start_sequence_delta: Option<i64>,
+}
+
+/// Control whether a subscription will automatically or manually ack received messages.
+///
+/// By default, subscriptions will be setup to automatically ack messages which are received on
+/// the stream. Use `Manual` mode to control the acks yourself.
+#[derive(Debug, Clone)]
+pub enum SubscriptionAckMode {
+    Auto,
+    Manual,
+}
+
+impl Default for SubscriptionAckMode {
+    fn default() -> Self {
+        SubscriptionAckMode::Auto
+    }
 }
 
 #[derive(Debug)]
@@ -250,11 +270,9 @@ impl NatsStreamingClient {
         )
     }
 
-    pub fn subscribe(
-        &self,
-        subject: String,
-        mut opts: SubscribeOptions,
-    ) -> impl Future<Item = StreamingSubscription, Error = NatsStreamingError> {
+    pub fn subscribe(&self, subject: String, mut opts: SubscribeOptions)
+        -> impl Future<Item = StreamingSubscription, Error = NatsStreamingError>
+    {
         let sub_inbox = Self::generate_guid();
         let mut sub_request = streaming::SubscriptionRequest {
             client_id: self.client_id.clone(),
@@ -304,6 +322,7 @@ impl NatsStreamingClient {
         let sub_requests = self.config.read().sub_requests.clone();
         let client_id = self.client_id.clone();
         let sub_config = Arc::clone(&self.config);
+        let ack_mode = opts.ack_mode.clone();
 
         Either::B(self.nats.subscribe(sub_command).from_err().and_then(move |sub_stream| {
             nats.request(sub_requests, sub_request_buf)
@@ -311,52 +330,53 @@ impl NatsStreamingClient {
                 .and_then(|msg| {
                     future::result(streaming::SubscriptionResponse::decode(&msg.payload).map_err(|e| e.into()))
                 }).and_then(move |resp| {
-                    let ack_inbox = resp.ack_inbox;
 
+                    // Setup sink for decoding received messages & auto acking if needed.
                     let (tx, rx) = futures::sync::mpsc::unbounded();
+                    let ack_inbox_autoack = resp.ack_inbox.clone();
+                    tokio_executor::spawn(sub_stream
+                        .map_err(|e| NatsStreamingError::from(e))
+                        .and_then(move |msg| {
+                            let msg_pbuf = match streaming::MsgProto::decode(&msg.payload) {
+                                Ok(msg) => msg,
+                                Err(e) => {
+                                    return Err(NatsStreamingError::from(e));
+                                }
+                            };
+
+                            let sub_request_buf = match Self::encode_message(streaming::Ack {
+                                subject: msg_pbuf.subject.clone(),
+                                sequence: msg_pbuf.sequence.clone(),
+                                ..Default::default()
+                            }) {
+                                Ok(buf) => buf,
+                                Err(e) => {
+                                    return Err(NatsStreamingError::from(e));
+                                }
+                            };
+
+                            let ack_pub_msg = commands::PubCommand::builder()
+                                .subject(ack_inbox_autoack.clone())
+                                .payload(sub_request_buf)
+                                .build()
+                                .unwrap();
+
+                            Ok((StreamingMessage::new(msg_pbuf, Some((nats_ack.clone(), ack_pub_msg))), ack_mode.clone()))
+                        })
+                        .and_then(|(mut stream_msg, ack_mode)| match ack_mode {
+                            SubscriptionAckMode::Auto => Either::A(stream_msg.ack().map(move |_| stream_msg)),
+                            SubscriptionAckMode::Manual => Either::B(future::ok(()).map(move |_| stream_msg)),
+                        })
+                        .forward(tx).map(|_| ()).map_err(|_| ())
+                    );
 
                     let settings = StreamingSubscriptionSettings::builder()
                         .sid(sub_sid)
                         .subject(subject)
-                        .ack_inbox(ack_inbox.clone())
+                        .ack_inbox(resp.ack_inbox)
                         .client_id(client_id)
                         .build()
                         .unwrap();
-
-                    tokio_executor::spawn(
-                        sub_stream
-                            .map_err(|e| NatsStreamingError::from(e))
-                            .and_then(move |msg| {
-                                let msg_pbuf = match streaming::MsgProto::decode(&msg.payload) {
-                                    Ok(msg) => msg,
-                                    Err(e) => {
-                                        return Either::A(future::err(e.into()));
-                                    }
-                                };
-
-                                let sub_request_buf = match Self::encode_message(streaming::Ack {
-                                    subject: msg_pbuf.subject.clone(),
-                                    sequence: msg_pbuf.sequence.clone(),
-                                    ..Default::default()
-                                }) {
-                                    Ok(buf) => buf,
-                                    Err(e) => {
-                                        return Either::A(future::err(e.into()));
-                                    }
-                                };
-
-                                let ack_pub_msg = commands::PubCommand::builder()
-                                    .subject(ack_inbox.clone())
-                                    .payload(sub_request_buf)
-                                    .build()
-                                    .unwrap();
-
-                                Either::B(nats_ack.publish(ack_pub_msg).from_err().map(move |_| msg_pbuf))
-                            }).forward(tx)
-                            .map(|_| ())
-                            .map_err(|_| ()),
-                    );
-
                     future::ok(StreamingSubscription::new(Arc::clone(&nats), sub_config, rx, settings))
                 })
         }))
