@@ -71,12 +71,14 @@ struct SubscriptionSink {
 #[derive(Debug)]
 struct NatsClientMultiplexer {
     other_tx: Arc<mpsc::UnboundedSender<Op>>,
-    subs_tx: Arc<RwLock<HashMap<NatsSubscriptionId, SubscriptionSink>>>,
+    trigger: stream_cancel::Trigger,
+    valve: stream_cancel::Valve,
+    subs_tx: Arc<RwLock<HashMap<NatsSubscriptionId, (SubscriptionSink, stream_cancel::Trigger)>>>,
 }
 
 impl NatsClientMultiplexer {
-    pub fn new(stream: NatsStream) -> (Self, mpsc::UnboundedReceiver<Op>) {
-        let subs_tx: Arc<RwLock<HashMap<NatsSubscriptionId, SubscriptionSink>>> =
+    pub fn new(stream: NatsStream) -> (Self, stream_cancel::Valved<mpsc::UnboundedReceiver<Op>>) {
+        let subs_tx: Arc<RwLock<HashMap<NatsSubscriptionId, (SubscriptionSink, stream_cancel::Trigger)>>> =
             Arc::new(RwLock::new(HashMap::default()));
 
         let (other_tx, other_rx) = mpsc::unbounded();
@@ -84,16 +86,18 @@ impl NatsClientMultiplexer {
 
         let stx_inner = Arc::clone(&subs_tx);
         let otx_inner = Arc::clone(&other_tx);
+        let (trigger, valve) = stream_cancel::Valve::new();
 
         // Here we filter the incoming TCP stream Messages by subscription ID and sending it to the appropriate Sender
-        let work_tx = stream
+        let work_tx = valve
+            .wrap(stream)
             .for_each(move |op| {
                 match op {
                     Op::MSG(msg) => {
                         debug!(target: "nitox", "Found MSG from global Stream {:?}", msg);
                         if let Some(s) = (*stx_inner.read()).get(&msg.sid) {
                             debug!(target: "nitox", "Found multiplexed receiver to send to {}", msg.sid);
-                            let _ = s.tx.unbounded_send(msg);
+                            let _ = s.0.tx.unbounded_send(msg);
                         }
                     }
                     // Forward the rest of the messages to the owning client
@@ -110,26 +114,39 @@ impl NatsClientMultiplexer {
 
         tokio_executor::spawn(work_tx);
 
-        (NatsClientMultiplexer { subs_tx, other_tx }, other_rx)
+        let other_rx = valve.wrap(other_rx);
+
+        let multiplexer = NatsClientMultiplexer {
+            subs_tx,
+            trigger,
+            valve,
+            other_tx,
+        };
+
+        (multiplexer, other_rx)
     }
 
     pub fn for_sid(&self, sid: NatsSubscriptionId) -> impl Stream<Item = Message, Error = NatsError> + Send + Sync {
         let (tx, rx) = mpsc::unbounded();
+        let (trigger, rx) = stream_cancel::Valved::new(rx);
         (*self.subs_tx.write()).insert(
             sid,
-            SubscriptionSink {
-                tx,
-                max_count: None,
-                count: 0,
-            },
+            (
+                SubscriptionSink {
+                    tx,
+                    max_count: None,
+                    count: 0,
+                },
+                trigger,
+            ),
         );
 
-        rx.map_err(|_| NatsError::InnerBrokenChain)
+        self.valve.wrap(rx).map_err(|_| NatsError::InnerBrokenChain)
     }
 
     pub fn remove_sid(&self, sid: &str) {
         if let Some(mut tx) = (*self.subs_tx.write()).remove(sid) {
-            let _ = tx.tx.close();
+            let _ = tx.0.tx.close();
             drop(tx);
         }
     }
@@ -302,7 +319,7 @@ impl NatsClient {
         let mut unsub_now = true;
         if let Some(max) = cmd.max_msgs {
             if let Some(mut s) = (*self.rx.subs_tx.write()).get_mut(&cmd.sid) {
-                s.max_count = Some(max);
+                s.0.max_count = Some(max);
                 unsub_now = false;
             }
         }
@@ -337,10 +354,10 @@ impl NatsClient {
                     debug!(target: "nitox", "Retrieving sink for sid {:?}", sid);
                     if let Some(s) = stx.get_mut(&sid) {
                         debug!(target: "nitox", "Checking if count exists");
-                        if let Some(max_count) = s.max_count {
-                            s.count += 1;
-                            debug!(target: "nitox", "Max: {} / current: {}", max_count, s.count);
-                            if s.count >= max_count {
+                        if let Some(max_count) = s.0.max_count {
+                            s.0.count += 1;
+                            debug!(target: "nitox", "Max: {} / current: {}", max_count, s.0.count);
+                            if s.0.count >= max_count {
                                 debug!(target: "nitox", "Starting deletion");
                                 delete = Some(max_count);
                             }

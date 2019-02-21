@@ -9,11 +9,7 @@ extern crate tokio_codec;
 extern crate tokio_executor;
 extern crate tokio_tcp;
 
-use futures::{
-    future,
-    prelude::*,
-    sync::{mpsc, oneshot},
-};
+use futures::{future, prelude::*, sync::mpsc};
 use nitox::{codec::OpCodec, commands::*, NatsClient, NatsClientOptions, NatsError, Op};
 use parking_lot::RwLock;
 use tokio_codec::Decoder;
@@ -119,6 +115,31 @@ fn create_tcp_mock(
 }
 
 #[test]
+fn it_drops() {
+    elog!();
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+    let connect_cmd = ConnectCommand::builder().build().unwrap();
+    let options = NatsClientOptions::builder()
+        .connect_command(connect_cmd)
+        .cluster_uri("127.0.0.1:4222")
+        .build()
+        .unwrap();
+
+    let connection = NatsClient::from_options(options);
+    let connection_result = runtime.block_on(connection.and_then(|conn| {
+        tokio::spawn(
+            conn.subscribe(SubCommand::builder().subject("foo").build().unwrap())
+                .map(|_| ())
+                .map_err(|_| ()),
+        );
+        drop(conn);
+        future::ok(())
+    }));
+    debug!(target: "nitox", "it_drops::connection_result {:#?}", connection_result);
+    assert!(connection_result.is_ok());
+}
+
+#[test]
 fn can_connect_raw() {
     elog!();
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
@@ -130,10 +151,7 @@ fn can_connect_raw() {
         .unwrap();
 
     let connection = NatsClient::from_options(options);
-    let (tx, rx) = oneshot::channel();
-    runtime.spawn(connection.then(|r| tx.send(r).map_err(|e| panic!("Cannot send Result {:?}", e))));
-    let connection_result = rx.wait().expect("Cannot wait for a result");
-    let _ = runtime.shutdown_now().wait();
+    let connection_result = runtime.block_on(connection);
     debug!(target: "nitox", "can_connect_raw::connection_result {:#?}", connection_result);
     assert!(connection_result.is_ok());
 }
@@ -150,10 +168,7 @@ fn can_connect() {
         .unwrap();
 
     let connection = NatsClient::from_options(options).and_then(|client| client.connect());
-    let (tx, rx) = oneshot::channel();
-    runtime.spawn(connection.then(|r| tx.send(r).map_err(|e| panic!("Cannot send Result {:?}", e))));
-    let connection_result = rx.wait().expect("Cannot wait for a result");
-    let _ = runtime.shutdown_now().wait();
+    let connection_result = runtime.block_on(connection);
     debug!(target: "nitox", "can_connect::connection_result {:#?}", connection_result);
     assert!(connection_result.is_ok());
 }
@@ -188,10 +203,7 @@ fn can_sub_and_pub() {
                 })
         });
 
-    let (tx, rx) = oneshot::channel();
-    runtime.spawn(fut.then(|r| tx.send(r).map_err(|e| panic!("Cannot send Result {:?}", e))));
-    let connection_result = rx.wait().expect("Cannot wait for a result");
-    let _ = runtime.shutdown_now().wait();
+    let connection_result = runtime.block_on(fut);
     debug!(target: "nitox", "can_sub_and_pub::connection_result {:#?}", connection_result);
     assert!(connection_result.is_ok());
     let msg = connection_result.unwrap();
@@ -241,10 +253,7 @@ fn can_subscribe_for_1000_messages() {
             })
         });
 
-    let (tx, rx) = oneshot::channel();
-    runtime.spawn(fut.then(|r| tx.send(r).map_err(|e| panic!("Cannot send Result {:?}", e))));
-    let connection_result = rx.wait().expect("Cannot wait for a result");
-    let _ = runtime.shutdown_now().wait();
+    let connection_result = runtime.block_on(fut);
     debug!(target: "nitox", "can_subscribe_for_1000_messages::connection_result {:#?}", connection_result);
     println!("{:?}", connection_result);
     match connection_result {
@@ -273,10 +282,7 @@ fn can_request() {
         .and_then(|client| client.connect())
         .and_then(|client| client.request("foo2".into(), "foo".into()));
 
-    let (tx, rx) = oneshot::channel();
-    runtime.spawn(fut.then(|r| tx.send(r).map_err(|e| panic!("Cannot send Result {:?}", e))));
-    let connection_result = rx.wait().expect("Cannot wait for a result");
-    let _ = runtime.shutdown_now().wait();
+    let connection_result = runtime.block_on(fut);
     debug!("can_request::connection_result {:#?}", connection_result);
     assert!(connection_result.is_ok());
     let msg = connection_result.unwrap();
@@ -344,11 +350,8 @@ fn can_request_a_lot() {
                 .and_then(move |sub_stream| spawn_responder(client, sub_stream))
         });
 
-    let (tx, rx) = oneshot::channel();
-    runtime.spawn(fut_requester.then(|r| tx.send(r).map_err(|_| ())));
     runtime.spawn(fut_answerer.map_err(|_| ()));
-    let connection_result = rx.wait().expect("Cannot wait for a result");
-    let _ = runtime.shutdown_now().wait();
+    let connection_result = runtime.block_on(fut_requester);
     debug!("can_request_a_lot::connection_result {:#?}", connection_result);
     assert!(connection_result.is_ok());
 }
@@ -388,11 +391,8 @@ fn can_request_a_lot_pedantic() {
                 .and_then(move |sub_stream| spawn_responder(client, sub_stream))
         });
 
-    let (tx, rx) = oneshot::channel();
-    runtime.spawn(fut_requester.then(|r| tx.send(r).map_err(|_| ())));
     runtime.spawn(fut_answerer.map_err(|_| ()));
-    let connection_result = rx.wait().expect("Cannot wait for a result");
-    let _ = runtime.shutdown_now().wait();
+    let connection_result = runtime.block_on(fut_requester);
     debug!("can_request_a_lot::connection_result {:#?}", connection_result);
     assert!(connection_result.is_ok());
 }
@@ -422,10 +422,7 @@ fn can_pong_to_ping() {
                 .map_err(|(e, _)| e)
         });
 
-    let (tx, rx) = oneshot::channel();
-    runtime.spawn(fut.then(|r| tx.send(r).map_err(|e| panic!("Cannot send Result {:?}", e))));
-    let connection_result = rx.wait().expect("Cannot wait for a result");
-    let _ = runtime.shutdown_now().wait();
+    let connection_result = runtime.block_on(fut);
     debug!(target: "nitox", "can_pong_to_ping::connection_result {:#?}", connection_result);
     assert!(connection_result.is_ok());
 }
