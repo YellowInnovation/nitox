@@ -23,6 +23,7 @@ name = "nitox"
 readme = "README.md"
 repository = "https://github.com/YellowInnovation/nitox"
 version = "0.1.10"
+edition = "2018"
 
 [[bench]]
 harness = false
@@ -40,15 +41,12 @@ parking_lot = "0.7"
 rand = "0.6"
 serde = "1.0"
 serde_derive = "1.0"
+serde_json = "1.0"
 tokio-codec = "0.1"
 tokio-executor = "0.1"
 tokio-tcp = "0.1"
 tokio-tls = "0.2"
 url = "1.7"
-
-[dependencies.serde_json]
-features = ["preserve_order"]
-version = "1.0"
 
 [dev-dependencies]
 criterion = "0.2"

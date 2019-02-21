@@ -1,5 +1,5 @@
+use crate::protocol::{Command, CommandError};
 use bytes::{BufMut, Bytes, BytesMut};
-use protocol::{Command, CommandError};
 
 /// The MSG protocol message is used to deliver an application message to the client.
 #[derive(Debug, Clone, PartialEq, Builder)]
@@ -44,7 +44,7 @@ impl Command for Message {
         Ok(bytes.freeze())
     }
 
-    fn try_parse(buf: &[u8]) -> Result<Self, CommandError> {
+    fn try_parse(buf: Bytes) -> Result<Self, CommandError> {
         let len = buf.len();
 
         if buf[len - 2..] != [b'\r', b'\n'] {
@@ -58,29 +58,30 @@ impl Command for Message {
 
             let payload: Bytes = buf[payload_start + 2..len - 2].into();
 
-            let whole_command = ::std::str::from_utf8(&buf[..payload_start])?;
-            let mut split = whole_command.split_whitespace();
+            let mut split = buf[..payload_start].split(|c| *c == b' ' || *c == b'\t');
             let cmd = split.next().ok_or_else(|| CommandError::CommandMalformed)?;
             // Check if we're still on the right command
-            if cmd.as_bytes() != Self::CMD_NAME {
+            if cmd != Self::CMD_NAME {
                 return Err(CommandError::CommandMalformed);
             }
 
-            let payload_len: usize = split
-                .next_back()
-                .ok_or_else(|| CommandError::CommandMalformed)?
-                .parse()?;
+            let payload_len: usize =
+                std::str::from_utf8(split.next_back().ok_or_else(|| CommandError::CommandMalformed)?)?.parse()?;
 
             if payload.len() != payload_len {
                 return Err(CommandError::CommandMalformed);
             }
 
             // Extract subject
-            let subject: String = split.next().ok_or_else(|| CommandError::CommandMalformed)?.into();
+            let subject: String =
+                std::str::from_utf8(split.next().ok_or_else(|| CommandError::CommandMalformed)?)?.into();
 
-            let sid: String = split.next().ok_or_else(|| CommandError::CommandMalformed)?.into();
+            let sid: String = std::str::from_utf8(split.next().ok_or_else(|| CommandError::CommandMalformed)?)?.into();
 
-            let reply_to: Option<String> = split.next().map(|v| v.into());
+            let reply_to: Option<String> = match split.next() {
+                Some(v) => Some(std::str::from_utf8(v)?.into()),
+                _ => None,
+            };
 
             Ok(Message {
                 subject,
@@ -113,18 +114,18 @@ impl MessageBuilder {
 #[cfg(test)]
 mod tests {
     use super::{Message, MessageBuilder};
-    use protocol::Command;
+    use crate::protocol::Command;
 
     static DEFAULT_MSG: &'static str = "MSG\tFOO\tpouet\t4\r\ntoto\r\n";
 
     #[test]
     fn it_parses() {
-        let parse_res = Message::try_parse(DEFAULT_MSG.as_bytes());
+        let parse_res = Message::try_parse(DEFAULT_MSG.into());
         assert!(parse_res.is_ok());
         let cmd = parse_res.unwrap();
         assert!(cmd.reply_to.is_none());
-        assert_eq!(&cmd.subject, "FOO");
-        assert_eq!(&cmd.sid, "pouet");
+        assert_eq!(cmd.subject, "FOO");
+        assert_eq!(cmd.sid, "pouet");
         assert_eq!(cmd.payload, "toto");
     }
 

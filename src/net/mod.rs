@@ -6,7 +6,7 @@ use std::sync::Arc;
 pub(crate) mod connection;
 mod connection_inner;
 
-use error::NatsError;
+use crate::error::NatsError;
 
 use self::connection::NatsConnectionState;
 use self::connection_inner::*;
@@ -34,7 +34,8 @@ pub(crate) fn connect_tls(host: String, addr: SocketAddr) -> impl Future<Item = 
         .and_then(move |socket| {
             debug!(target: "nitox", "Connected through TCP, upgrading to TLS");
             NatsConnectionInner::upgrade_tcp_to_tls(&host, socket)
-        }).map(move |socket| {
+        })
+        .map(move |socket| {
             debug!(target: "nitox", "Connected through TCP over TLS");
             NatsConnection {
                 is_tls: true,

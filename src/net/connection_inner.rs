@@ -1,16 +1,16 @@
-use codec::OpCodec;
+use crate::codec::OpCodec;
+use crate::protocol::Op;
 use futures::{
     future::{self, Either},
     prelude::*,
 };
 use native_tls::TlsConnector as NativeTlsConnector;
-use protocol::Op;
 use std::net::SocketAddr;
 use tokio_codec::{Decoder, Framed};
 use tokio_tcp::TcpStream;
 use tokio_tls::{TlsConnector, TlsStream};
 
-use error::NatsError;
+use crate::error::NatsError;
 
 /// Inner raw stream enum over TCP and TLS/TCP
 #[derive(Debug)]

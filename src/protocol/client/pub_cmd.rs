@@ -1,5 +1,5 @@
+use crate::protocol::{Command, CommandError};
 use bytes::{BufMut, Bytes, BytesMut};
-use protocol::{Command, CommandError};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 
 /// The PUB message publishes the message payload to the given subject name, optionally supplying a reply subject.
@@ -26,8 +26,7 @@ impl PubCommand {
 
     /// Generates a random `reply_to` `String`
     pub fn generate_reply_to() -> String {
-        let mut rng = thread_rng();
-        rng.sample_iter(&Alphanumeric).take(16).collect()
+        thread_rng().sample_iter(&Alphanumeric).take(16).collect()
     }
 }
 
@@ -35,22 +34,28 @@ impl Command for PubCommand {
     const CMD_NAME: &'static [u8] = b"PUB";
 
     fn into_vec(self) -> Result<Bytes, CommandError> {
-        let rt = if let Some(reply_to) = self.reply_to {
-            format!("\t{}", reply_to)
-        } else {
-            "".into()
-        };
+        let (rt_len, rt) = self.reply_to.map_or((0, "".into()), |rp| (rp.len() + 1, rp));
+        // Computes the string length of the payload_len by dividing the number par ln(10)
+        let size_len = ((self.payload.len() + 1) as f64 / std::f64::consts::LN_10).ceil() as usize;
+        let len = 9 + self.subject.len() + rt_len + size_len + self.payload.len();
 
-        let cmd_str = format!("PUB\t{}{}\t{}\r\n", self.subject, rt, self.payload.len());
-        let mut bytes = BytesMut::with_capacity(cmd_str.len() + self.payload.len() + 2);
-        bytes.put(cmd_str.as_bytes());
+        let mut bytes = BytesMut::with_capacity(len);
+        bytes.put("PUB\t");
+        bytes.put(self.subject);
+        if rt_len > 0 {
+            bytes.put(b'\t');
+            bytes.put(rt);
+        }
+        bytes.put(b'\t');
+        bytes.put(self.payload.len().to_string());
+        bytes.put("\r\n");
         bytes.put(self.payload);
         bytes.put("\r\n");
 
         Ok(bytes.freeze())
     }
 
-    fn try_parse(buf: &[u8]) -> Result<Self, CommandError> {
+    fn try_parse(buf: Bytes) -> Result<Self, CommandError> {
         let len = buf.len();
 
         if buf[len - 2..] != [b'\r', b'\n'] {
@@ -64,27 +69,28 @@ impl Command for PubCommand {
 
             let payload: Bytes = buf[payload_start + 2..len - 2].into();
 
-            let whole_command = ::std::str::from_utf8(&buf[..payload_start])?;
-            let mut split = whole_command.split_whitespace();
+            let mut split = buf[..payload_start].split(|c| *c == b' ' || *c == b'\t');
             let cmd = split.next().ok_or_else(|| CommandError::CommandMalformed)?;
             // Check if we're still on the right command
-            if cmd.as_bytes() != Self::CMD_NAME {
+            if cmd != Self::CMD_NAME {
                 return Err(CommandError::CommandMalformed);
             }
 
-            let payload_len: usize = split
-                .next_back()
-                .ok_or_else(|| CommandError::CommandMalformed)?
-                .parse()?;
+            let payload_len: usize =
+                std::str::from_utf8(split.next_back().ok_or_else(|| CommandError::CommandMalformed)?)?.parse()?;
 
             if payload.len() != payload_len {
                 return Err(CommandError::CommandMalformed);
             }
 
             // Extract subject
-            let subject: String = split.next().ok_or_else(|| CommandError::CommandMalformed)?.into();
+            let subject: String =
+                std::str::from_utf8(split.next().ok_or_else(|| CommandError::CommandMalformed)?)?.into();
 
-            let reply_to: Option<String> = split.next().map(|v| v.into());
+            let reply_to: Option<String> = match split.next() {
+                Some(v) => Some(std::str::from_utf8(v)?.into()),
+                _ => None,
+            };
 
             Ok(PubCommand {
                 subject,
@@ -98,12 +104,6 @@ impl Command for PubCommand {
 }
 
 impl PubCommandBuilder {
-    pub fn auto_reply_to(&mut self) -> &mut Self {
-        let inbox = PubCommand::generate_reply_to();
-        self.reply_to = Some(Some(inbox));
-        self
-    }
-
     fn validate(&self) -> Result<(), String> {
         if let Some(ref subj) = self.subject {
             check_cmd_arg!(subj, "subject");
@@ -122,16 +122,16 @@ impl PubCommandBuilder {
 #[cfg(test)]
 mod tests {
     use super::{PubCommand, PubCommandBuilder};
-    use protocol::Command;
+    use crate::protocol::Command;
 
     static DEFAULT_PUB: &'static str = "PUB\tFOO\t11\r\nHello NATS!\r\n";
 
     #[test]
     fn it_parses() {
-        let parse_res = PubCommand::try_parse(DEFAULT_PUB.as_bytes());
+        let parse_res = PubCommand::try_parse(DEFAULT_PUB.into());
         assert!(parse_res.is_ok());
         let cmd = parse_res.unwrap();
-        assert_eq!(&cmd.subject, "FOO");
+        assert_eq!(cmd.subject, "FOO");
         assert_eq!(&cmd.payload, "Hello NATS!");
         assert!(cmd.reply_to.is_none());
     }

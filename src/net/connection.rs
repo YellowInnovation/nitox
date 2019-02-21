@@ -6,8 +6,8 @@ use parking_lot::RwLock;
 use std::{net::SocketAddr, sync::Arc};
 use tokio_executor;
 
-use error::NatsError;
-use protocol::Op;
+use crate::error::NatsError;
+use crate::protocol::Op;
 
 use super::connection_inner::NatsConnectionInner;
 
@@ -54,7 +54,7 @@ impl NatsConnection {
         let inner_arc = Arc::clone(&self.inner);
         let inner_state = Arc::clone(&self.state);
         let is_tls = self.is_tls;
-        let maybe_host = self.host.clone();
+        let maybe_host: Option<String> = self.host.clone();
         NatsConnectionInner::connect_tcp(&self.addr)
             .and_then(move |socket| {
                 if is_tls {
@@ -66,7 +66,8 @@ impl NatsConnection {
                 } else {
                     Either::B(future::ok(NatsConnectionInner::from(socket)))
                 }
-            }).and_then(move |inner| {
+            })
+            .and_then(move |inner| {
                 {
                     *inner_arc.write() = inner;
                     *inner_state.write() = NatsConnectionState::Connected;

@@ -1,5 +1,5 @@
-use bytes::Bytes;
-use protocol::{Command, CommandError};
+use crate::protocol::{Command, CommandError};
+use bytes::{BufMut, Bytes, BytesMut};
 use serde_json as json;
 
 /// The CONNECT message is the client version of the INFO message. Once the client has established a TCP/IP
@@ -58,10 +58,7 @@ impl ConnectCommandBuilder {
     }
 
     fn default_ver(&self) -> Result<String, String> {
-        match ::std::env::var("CARGO_PKG_VERSION") {
-            Ok(v) => Ok(v),
-            Err(_) => Ok("0.1.x".into()),
-        }
+        Ok(env!("CARGO_PKG_VERSION").into())
     }
 
     fn default_lang(&self) -> Result<String, String> {
@@ -73,10 +70,16 @@ impl Command for ConnectCommand {
     const CMD_NAME: &'static [u8] = b"CONNECT";
 
     fn into_vec(self) -> Result<Bytes, CommandError> {
-        Ok(format!("CONNECT\t{}\r\n", json::to_string(&self)?).as_bytes().into())
+        let json_cmd = json::to_vec(&self)?;
+        let mut cmd: BytesMut = BytesMut::with_capacity(10 + json_cmd.len());
+        cmd.put("CONNECT\t");
+        cmd.put(json_cmd);
+        cmd.put("\r\n");
+
+        Ok(cmd.freeze())
     }
 
-    fn try_parse(buf: &[u8]) -> Result<ConnectCommand, CommandError> {
+    fn try_parse(buf: Bytes) -> Result<Self, CommandError> {
         let len = buf.len();
 
         if buf[len - 2..] != [b'\r', b'\n'] {
@@ -94,22 +97,22 @@ impl Command for ConnectCommand {
 #[cfg(test)]
 mod tests {
     use super::{ConnectCommand, ConnectCommandBuilder};
-    use protocol::Command;
+    use crate::protocol::Command;
 
     static DEFAULT_CONNECT: &'static str = "CONNECT\t{\"verbose\":false,\"pedantic\":false,\"tls_required\":false,\"name\":\"nitox\",\"lang\":\"rust\",\"version\":\"1.0.0\"}\r\n";
 
     #[test]
     fn it_parses() {
-        let parse_res = ConnectCommand::try_parse(DEFAULT_CONNECT.as_bytes());
+        let parse_res = ConnectCommand::try_parse(DEFAULT_CONNECT.into());
         assert!(parse_res.is_ok());
         let cmd = parse_res.unwrap();
         assert_eq!(cmd.verbose, false);
         assert_eq!(cmd.pedantic, false);
         assert_eq!(cmd.tls_required, false);
         assert!(cmd.name.is_some());
-        assert_eq!(&cmd.name.unwrap(), "nitox");
-        assert_eq!(&cmd.lang, "rust");
-        assert_eq!(&cmd.version, "1.0.0");
+        assert_eq!(cmd.name.unwrap(), "nitox");
+        assert_eq!(cmd.lang, "rust");
+        assert_eq!(cmd.version, "1.0.0");
     }
 
     #[test]

@@ -17,9 +17,9 @@ use std::{
 use tokio_executor;
 use url::Url;
 
-use error::NatsError;
-use net::*;
-use protocol::{commands::*, Op};
+use crate::error::NatsError;
+use crate::net::*;
+use crate::protocol::{commands::*, Op};
 
 /// Sink (write) part of a TCP stream
 type NatsSink = stream::SplitSink<NatsConnection>;
@@ -113,10 +113,10 @@ impl NatsClientMultiplexer {
         (NatsClientMultiplexer { subs_tx, other_tx }, other_rx)
     }
 
-    pub fn for_sid(&self, sid: NatsSubscriptionId) -> impl Stream<Item = Message, Error = NatsError> + Send + Sync {
+    pub fn for_sid(&self, sid: &str) -> impl Stream<Item = Message, Error = NatsError> + Send + Sync {
         let (tx, rx) = mpsc::unbounded();
         (*self.subs_tx.write()).insert(
-            sid,
+            sid.into(),
             SubscriptionSink {
                 tx,
                 max_count: None,
@@ -330,7 +330,7 @@ impl NatsClient {
         let inner_rx = self.rx.clone();
         let sid = cmd.sid.clone();
         self.tx.send(Op::SUB(cmd)).and_then(move |_| {
-            let stream = inner_rx.for_sid(sid.clone()).and_then(move |msg| {
+            let stream = inner_rx.for_sid(&sid).and_then(move |msg| {
                 {
                     let mut stx = inner_rx.subs_tx.write();
                     let mut delete = None;
@@ -390,7 +390,7 @@ impl NatsClient {
         let sid = sub_cmd.sid.clone();
 
         let unsub_cmd = UnsubCommand {
-            sid: sub_cmd.sid.clone(),
+            sid: sid.clone(),
             max_msgs: Some(1),
         };
 
@@ -400,7 +400,7 @@ impl NatsClient {
 
         let stream = self
             .rx
-            .for_sid(sid.clone())
+            .for_sid(&sid)
             .inspect(|msg| debug!(target: "nitox", "Request saw msg in multiplexed stream {:#?}", msg))
             .take(1)
             .into_future()

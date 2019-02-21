@@ -1,5 +1,5 @@
-use bytes::Bytes;
-use protocol::{Command, CommandError};
+use crate::protocol::{Command, CommandError};
+use bytes::{BufMut, Bytes, BytesMut};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 
 /// SUB initiates a subscription to a subject, optionally joining a distributed queue group.
@@ -32,38 +32,45 @@ impl Command for SubCommand {
     const CMD_NAME: &'static [u8] = b"SUB";
 
     fn into_vec(self) -> Result<Bytes, CommandError> {
-        let qg = if let Some(queue_group) = self.queue_group {
-            format!("\t{}", queue_group)
-        } else {
-            "".into()
-        };
+        let (qg_len, qg) = self.queue_group.map_or((0, "".into()), |qg| (qg.len() + 1, qg));
+        let len = 7 + self.subject.len() + qg_len + self.sid.len();
+        let mut bytes = BytesMut::with_capacity(len);
+        bytes.put("SUB\t");
+        bytes.put(self.subject);
+        if qg_len > 0 {
+            bytes.put_u8(b'\t');
+            bytes.put(qg);
+        }
+        bytes.put_u8(b'\t');
+        bytes.put(self.sid);
+        bytes.put("\r\n");
 
-        Ok(format!("SUB\t{}{}\t{}\r\n", self.subject, qg, self.sid)
-            .as_bytes()
-            .into())
+        Ok(bytes.freeze())
     }
 
-    fn try_parse(buf: &[u8]) -> Result<Self, CommandError> {
+    fn try_parse(buf: Bytes) -> Result<Self, CommandError> {
         let len = buf.len();
 
         if buf[len - 2..] != [b'\r', b'\n'] {
             return Err(CommandError::IncompleteCommandError);
         }
 
-        let whole_command = ::std::str::from_utf8(&buf[..len - 2])?;
-        let mut split = whole_command.split_whitespace();
+        let mut split = buf[..len - 2].split(|c| *c == b' ' || *c == b'\t');
         let cmd = split.next().ok_or_else(|| CommandError::CommandMalformed)?;
         // Check if we're still on the right command
-        if cmd.as_bytes() != Self::CMD_NAME {
+        if cmd != Self::CMD_NAME {
             return Err(CommandError::CommandMalformed);
         }
 
         // Extract subject
-        let subject: String = split.next().ok_or_else(|| CommandError::CommandMalformed)?.into();
+        let subject: String = std::str::from_utf8(split.next().ok_or_else(|| CommandError::CommandMalformed)?)?.into();
         // Extract subscription id
-        let sid: String = split.next_back().ok_or_else(|| CommandError::CommandMalformed)?.into();
+        let sid: String = std::str::from_utf8(split.next_back().ok_or_else(|| CommandError::CommandMalformed)?)?.into();
         // Extract queue group if exists
-        let queue_group: Option<String> = split.next().map(|v| v.into());
+        let queue_group: Option<String> = match split.next() {
+            Some(v) => Some(std::str::from_utf8(v)?.into()),
+            _ => None,
+        };
 
         Ok(SubCommand {
             subject,
@@ -92,17 +99,17 @@ impl SubCommandBuilder {
 #[cfg(test)]
 mod tests {
     use super::{SubCommand, SubCommandBuilder};
-    use protocol::Command;
+    use crate::protocol::Command;
 
     static DEFAULT_SUB: &'static str = "SUB\tFOO\tpouet\r\n";
 
     #[test]
     fn it_parses() {
-        let parse_res = SubCommand::try_parse(DEFAULT_SUB.as_bytes());
+        let parse_res = SubCommand::try_parse(DEFAULT_SUB.into());
         assert!(parse_res.is_ok());
         let cmd = parse_res.unwrap();
-        assert_eq!(&cmd.subject, "FOO");
-        assert_eq!(&cmd.sid, "pouet")
+        assert_eq!(cmd.subject, "FOO");
+        assert_eq!(cmd.sid, "pouet")
     }
 
     #[test]

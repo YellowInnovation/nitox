@@ -1,5 +1,5 @@
-use bytes::Bytes;
-use protocol::{commands::SubCommand, Command, CommandError};
+use crate::protocol::{commands::SubCommand, Command, CommandError};
+use bytes::{BufMut, Bytes, BytesMut};
 
 /// UNSUB unsubcribes the connection from the specified subject, or auto-unsubscribes after the
 /// specified number of messages has been received.
@@ -32,36 +32,44 @@ impl Command for UnsubCommand {
     const CMD_NAME: &'static [u8] = b"UNSUB";
 
     fn into_vec(self) -> Result<Bytes, CommandError> {
-        let mm = if let Some(max_msgs) = self.max_msgs {
-            format!("\t{}", max_msgs)
-        } else {
-            "".into()
-        };
+        // Computes the string length of the payload_len by dividing the number by ln(10)
+        let (mm_len, mm) = self.max_msgs.map_or((0, 0), |mm| {
+            (((mm + 1) as f64 / std::f64::consts::LN_10).ceil() as usize, mm)
+        });
 
-        Ok(format!("UNSUB\t{}{}\r\n", self.sid, mm).as_bytes().into())
+        let len = 8 + self.sid.len() + mm_len;
+
+        let mut bytes = BytesMut::with_capacity(len);
+        bytes.put("UNSUB\t");
+        bytes.put(self.sid);
+        if mm_len > 0 {
+            bytes.put(b'\t');
+            bytes.put(mm.to_string());
+        }
+        bytes.put("\r\n");
+
+        Ok(bytes.freeze())
     }
 
-    fn try_parse(buf: &[u8]) -> Result<Self, CommandError> {
+    fn try_parse(buf: Bytes) -> Result<Self, CommandError> {
         let len = buf.len();
 
         if buf[len - 2..] != [b'\r', b'\n'] {
             return Err(CommandError::IncompleteCommandError);
         }
 
-        let whole_command = ::std::str::from_utf8(&buf[..len - 2])?;
-        let mut split = whole_command.split_whitespace();
+        let mut split = buf[..len - 2].split(|c| *c == b' ' || *c == b'\t');
         let cmd = split.next().ok_or_else(|| CommandError::CommandMalformed)?;
         // Check if we're still on the right command
-        if cmd.as_bytes() != Self::CMD_NAME {
+        if cmd != Self::CMD_NAME {
             return Err(CommandError::CommandMalformed);
         }
 
-        let sid: String = split.next().ok_or_else(|| CommandError::CommandMalformed)?.into();
+        let sid: String = std::str::from_utf8(split.next().ok_or_else(|| CommandError::CommandMalformed)?)?.into();
 
-        let max_msgs: Option<u32> = if let Some(mm) = split.next() {
-            Some(mm.parse()?)
-        } else {
-            None
+        let max_msgs: Option<u32> = match split.next() {
+            Some(mm) => Some(std::str::from_utf8(mm)?.parse()?),
+            _ => None,
         };
 
         Ok(UnsubCommand { sid, max_msgs })
@@ -71,16 +79,16 @@ impl Command for UnsubCommand {
 #[cfg(test)]
 mod tests {
     use super::{UnsubCommand, UnsubCommandBuilder};
-    use protocol::Command;
+    use crate::protocol::Command;
 
     static DEFAULT_UNSUB: &'static str = "UNSUB\tpouet\r\n";
 
     #[test]
     fn it_parses() {
-        let parse_res = UnsubCommand::try_parse(DEFAULT_UNSUB.as_bytes());
+        let parse_res = UnsubCommand::try_parse(DEFAULT_UNSUB.into());
         assert!(parse_res.is_ok());
         let cmd = parse_res.unwrap();
-        assert_eq!(&cmd.sid, "pouet");
+        assert_eq!(cmd.sid, "pouet");
         assert!(cmd.max_msgs.is_none());
     }
 

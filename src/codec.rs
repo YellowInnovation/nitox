@@ -1,6 +1,6 @@
+use crate::error::NatsError;
+use crate::protocol::Op;
 use bytes::{BufMut, BytesMut};
-use error::NatsError;
-use protocol::{CommandError, Op};
 use tokio_codec::{Decoder, Encoder};
 
 /// `tokio-codec` implementation of the protocol parsing
@@ -41,14 +41,23 @@ impl Decoder for OpCodec {
             return Ok(None);
         }
 
+        debug!(target: "nitox", "next index: {}", self.next_index);
         debug!(target: "nitox", "codec buffer is {:?}", buf);
+
         // Let's check if we find a blank space at the beginning
         if let Some(command_offset) = buf[self.next_index..]
             .iter()
             .position(|b| *b == b' ' || *b == b'\t' || *b == b'\r')
         {
             let command_end = self.next_index + command_offset;
+
+            debug!(target: "nitox", "command end: {}", command_end);
             debug!(target: "nitox", "codec detected command name {:?}", &buf[..command_end]);
+
+            if !Op::command_exists(&buf[..command_end]) {
+                debug!(target: "nitox", "command was incomplete");
+                return Ok(None);
+            }
 
             if let Some(command_body_offset) = buf[command_end..].windows(2).position(|w| w == b"\r\n") {
                 let mut end_buf_pos = command_end + command_body_offset + 2;
@@ -65,26 +74,23 @@ impl Decoder for OpCodec {
                 }
 
                 debug!(target: "nitox", "codec detected command body {:?}", &buf[..end_buf_pos]);
-                match Op::from_bytes(&buf[..command_end], &buf[..end_buf_pos]) {
-                    Err(CommandError::IncompleteCommandError) => {
-                        debug!(target: "nitox", "command was incomplete");
-                        self.next_index = buf.len();
-                        Ok(None)
-                    }
+
+                let cmd_buf = buf.split_to(end_buf_pos);
+                debug!(target: "nitox", "buffer now contains {:?}", buf);
+                self.next_index = 0;
+
+                match Op::from_bytes(cmd_buf.freeze(), command_end) {
                     Ok(op) => {
                         debug!(target: "nitox", "codec parsed command {:#?}", op);
-                        let _ = buf.split_to(end_buf_pos);
-                        debug!(target: "nitox", "buffer now contains {:?}", buf);
-                        self.next_index = 0;
                         Ok(Some(op))
                     }
                     Err(e) => {
                         debug!(target: "nitox", "command couldn't be parsed {}", e);
-                        self.next_index = 0;
                         Err(e.into())
                     }
                 }
             } else {
+                debug!(target: "nitox", "command was incomplete");
                 Ok(None)
             }
         } else {

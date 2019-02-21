@@ -5,12 +5,7 @@ use std::fmt;
 ///
 /// Handling of these errors usually has to be done asynchronously.
 #[derive(Debug, PartialEq, Clone)]
-pub struct ServerError(String);
-impl From<String> for ServerError {
-    fn from(s: String) -> Self {
-        ServerError(s)
-    }
-}
+pub struct ServerError(pub String);
 
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

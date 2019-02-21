@@ -1,5 +1,5 @@
-use bytes::Bytes;
-use protocol::{Command, CommandError};
+use crate::protocol::{Command, CommandError};
+use bytes::{BufMut, Bytes, BytesMut};
 use serde_json as json;
 
 /// As soon as the server accepts a connection from the client, it will send information about itself and the
@@ -68,10 +68,16 @@ impl Command for ServerInfo {
     const CMD_NAME: &'static [u8] = b"INFO";
 
     fn into_vec(self) -> Result<Bytes, CommandError> {
-        Ok(format!("INFO\t{}\r\n", json::to_string(&self)?).as_bytes().into())
+        let json_cmd = json::to_vec(&self)?;
+        let mut cmd: BytesMut = BytesMut::with_capacity(7 + json_cmd.len());
+        cmd.put("INFO\t");
+        cmd.put(json_cmd);
+        cmd.put("\r\n");
+
+        Ok(cmd.freeze())
     }
 
-    fn try_parse(buf: &[u8]) -> Result<Self, CommandError> {
+    fn try_parse(buf: Bytes) -> Result<Self, CommandError> {
         let len = buf.len();
 
         if buf[len - 2..] != [b'\r', b'\n'] {
@@ -89,20 +95,20 @@ impl Command for ServerInfo {
 #[cfg(test)]
 mod tests {
     use super::{ServerInfo, ServerInfoBuilder};
-    use protocol::Command;
+    use crate::protocol::Command;
 
     static DEFAULT_INFO: &'static str = "INFO\t{\"server_id\":\"test\",\"version\":\"1.3.0\",\"go\":\"go1.10.3\",\"host\":\"0.0.0.0\",\"port\":4222,\"max_payload\":4000,\"proto\":1,\"client_id\":1337}\r\n";
 
     #[test]
     fn it_parses() {
-        let parse_res = ServerInfo::try_parse(DEFAULT_INFO.as_bytes());
+        let parse_res = ServerInfo::try_parse(DEFAULT_INFO.into());
         assert!(parse_res.is_ok());
         let cmd = parse_res.unwrap();
-        assert_eq!(&cmd.server_id, "test");
-        assert_eq!(&cmd.version, "1.3.0");
+        assert_eq!(cmd.server_id, "test");
+        assert_eq!(cmd.version, "1.3.0");
         assert_eq!(cmd.proto, Some(1u8));
-        assert_eq!(&cmd.go, "go1.10.3");
-        assert_eq!(&cmd.host, "0.0.0.0");
+        assert_eq!(cmd.go, "go1.10.3");
+        assert_eq!(cmd.host, "0.0.0.0");
         assert_eq!(cmd.port, 4222u32);
         assert_eq!(cmd.max_payload, 4000u32);
         assert!(cmd.client_id.is_some());

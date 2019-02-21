@@ -26,18 +26,6 @@ pub enum Op {
     ERR(ServerError),
 }
 
-macro_rules! op_from_cmd {
-    ($buf:ident, $cmd:path, $op:path) => {{
-        use protocol::CommandError;
-
-        match $cmd(&$buf) {
-            Ok(c) => Ok($op(c)),
-            Err(CommandError::IncompleteCommandError) => return Err(CommandError::IncompleteCommandError),
-            Err(e) => return Err(e.into()),
-        }
-    }};
-}
-
 impl Op {
     /// Transforms the OP into a byte slice
     pub fn into_bytes(self) -> Result<Bytes, CommandError> {
@@ -56,49 +44,68 @@ impl Op {
     }
 
     /// Tries to parse from a pair of command name and whole buffer
-    pub fn from_bytes(cmd_name: &[u8], buf: &[u8]) -> Result<Self, CommandError> {
-        match cmd_name {
-            ServerInfo::CMD_NAME => op_from_cmd!(buf, ServerInfo::try_parse, Op::INFO),
-            ConnectCommand::CMD_NAME => op_from_cmd!(buf, ConnectCommand::try_parse, Op::CONNECT),
-            Message::CMD_NAME => op_from_cmd!(buf, Message::try_parse, Op::MSG),
-            PubCommand::CMD_NAME => op_from_cmd!(buf, PubCommand::try_parse, Op::PUB),
-            SubCommand::CMD_NAME => op_from_cmd!(buf, SubCommand::try_parse, Op::SUB),
-            UnsubCommand::CMD_NAME => op_from_cmd!(buf, UnsubCommand::try_parse, Op::UNSUB),
+    pub fn from_bytes(buf: Bytes, cmd_idx: usize) -> Result<Self, CommandError> {
+        let mut cmd_name = vec![0; cmd_idx];
+        cmd_name.copy_from_slice(&buf[..cmd_idx]);
+
+        Ok(match &*cmd_name {
+            ServerInfo::CMD_NAME => Op::INFO(ServerInfo::try_parse(buf)?),
+            ConnectCommand::CMD_NAME => Op::CONNECT(ConnectCommand::try_parse(buf)?),
+            Message::CMD_NAME => Op::MSG(Message::try_parse(buf)?),
+            PubCommand::CMD_NAME => Op::PUB(PubCommand::try_parse(buf)?),
+            SubCommand::CMD_NAME => Op::SUB(SubCommand::try_parse(buf)?),
+            UnsubCommand::CMD_NAME => Op::UNSUB(UnsubCommand::try_parse(buf)?),
             b"PING" => {
-                if buf == b"PING\r\n" {
-                    Ok(Op::PING)
+                if buf == "PING\r\n" {
+                    Op::PING
                 } else {
-                    Err(CommandError::IncompleteCommandError)
+                    return Err(CommandError::IncompleteCommandError);
                 }
             }
             b"PONG" => {
-                if buf == b"PONG\r\n" {
-                    Ok(Op::PONG)
+                if buf == "PONG\r\n" {
+                    Op::PONG
                 } else {
-                    Err(CommandError::IncompleteCommandError)
+                    return Err(CommandError::IncompleteCommandError);
                 }
             }
             b"+OK" => {
-                if buf == b"+OK\r\n" {
-                    Ok(Op::OK)
+                if buf == "+OK\r\n" {
+                    Op::OK
                 } else {
-                    Err(CommandError::IncompleteCommandError)
+                    return Err(CommandError::IncompleteCommandError);
                 }
             }
             b"-ERR" => {
                 if &buf[buf.len() - 2..] == b"\r\n" {
-                    Ok(Op::ERR(ServerError::from(String::from_utf8(buf[1..].to_vec())?)))
+                    Op::ERR(ServerError(std::str::from_utf8(&buf[1..])?.into()))
                 } else {
-                    Err(CommandError::IncompleteCommandError)
+                    return Err(CommandError::IncompleteCommandError);
                 }
             }
             _ => {
                 if buf.len() > 7 {
-                    Err(CommandError::CommandNotFoundOrSupported)
+                    return Err(CommandError::CommandNotFoundOrSupported);
                 } else {
-                    Err(CommandError::IncompleteCommandError)
+                    return Err(CommandError::IncompleteCommandError);
                 }
             }
+        })
+    }
+
+    pub fn command_exists(cmd_name: &[u8]) -> bool {
+        match cmd_name {
+            ServerInfo::CMD_NAME => true,
+            ConnectCommand::CMD_NAME => true,
+            Message::CMD_NAME => true,
+            PubCommand::CMD_NAME => true,
+            SubCommand::CMD_NAME => true,
+            UnsubCommand::CMD_NAME => true,
+            b"PING" => true,
+            b"PONG" => true,
+            b"+OK" => true,
+            b"-ERR" => true,
+            _ => false,
         }
     }
 }

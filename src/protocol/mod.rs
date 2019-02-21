@@ -7,7 +7,7 @@ pub trait Command {
     /// Encodes the command into bytes
     fn into_vec(self) -> Result<Bytes, CommandError>;
     /// Tries to parse a buffer into a command
-    fn try_parse(buf: &[u8]) -> Result<Self, CommandError>
+    fn try_parse(buf: Bytes) -> Result<Self, CommandError>
     where
         Self: Sized;
 }
@@ -24,7 +24,7 @@ pub(crate) fn check_command_arg(s: &str) -> Result<(), ArgumentValidationError> 
 
 macro_rules! check_cmd_arg {
     ($val:ident, $part:expr) => {
-        use protocol::{check_command_arg, ArgumentValidationError};
+        use crate::protocol::{check_command_arg, ArgumentValidationError};
 
         match check_command_arg($val) {
             Ok(_) => {}
@@ -52,7 +52,7 @@ pub mod commands {
         client::{connect::*, pub_cmd::*, sub_cmd::*, unsub_cmd::*},
         server::{info::*, message::*, server_error::ServerError},
     };
-    pub use Command;
+    pub use crate::Command;
 }
 
 #[cfg(test)]
