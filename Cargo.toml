@@ -7,12 +7,12 @@ categories = [
 ]
 description = "Nitox is a `tokio`-based client for NATS."
 documentation = "https://docs.rs/nitox"
+exclude = ["examples/*"]
 homepage = "https://github.com/YellowInnovation/nitox"
 include = [
     "**/*.rs",
     "Cargo.toml",
 ]
-exclude = ["examples/*"]
 keywords = [
     "nats",
     "async",
@@ -27,6 +27,15 @@ version = "0.1.10"
 [[bench]]
 harness = false
 name = "nitox_parser_benchmark"
+
+[[example]]
+name = "request_with_reply"
+
+[[example]]
+name = "publish"
+
+[[example]]
+name = "subscribe_ten_messages"
 
 [dependencies]
 bytes = "0.4"
@@ -43,6 +52,7 @@ serde_derive = "1.0"
 tokio-codec = "0.1"
 tokio-executor = "0.1"
 tokio-tcp = "0.1"
+tokio-timer = "0.2"
 tokio-tls = "0.2"
 url = "1.7"
 
@@ -54,12 +64,3 @@ version = "1.0"
 criterion = "0.2"
 env_logger = "0.6"
 tokio = "0.1"
-
-[[example]]
-name = "request_with_reply"
-
-[[example]]
-name = "publish"
-
-[[example]]
-name = "subscribe_ten_messages"

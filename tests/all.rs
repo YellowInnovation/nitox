@@ -284,6 +284,38 @@ fn can_request() {
     assert_eq!(msg.payload, "bar");
 }
 
+#[test]
+fn can_request_timeout_10secs() {
+    elog!();
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+
+    let connect_cmd = ConnectCommand::builder().build().unwrap();
+    let options = NatsClientOptions::builder()
+        .connect_command(connect_cmd)
+        .cluster_uri("127.0.0.1:4222")
+        .build()
+        .unwrap();
+
+    let fut = NatsClient::from_options(options)
+        .and_then(|client| client.connect())
+        .and_then(|client| {
+            client.request_with_timeout("foo2".into(), "foo".into(), std::time::Duration::from_secs(10))
+        });
+
+    let (tx, rx) = oneshot::channel();
+    runtime.spawn(fut.then(|r| tx.send(r).map_err(|e| panic!("Cannot send Result {:?}", e))));
+    let connection_result = rx.wait().expect("Cannot wait for a result");
+    let _ = runtime.shutdown_now().wait();
+    debug!("can_request_timeout_10secs::connection_result {:#?}", connection_result);
+    assert!(connection_result.is_err());
+    let err = connection_result.unwrap_err();
+    debug!("can_request_timeout_10secs::err {:#?}", err);
+    assert!(match err {
+        NatsError::RequestTimeoutError => true,
+        _ => false,
+    });
+}
+
 type BoxFutNothing = Box<dyn Future<Item = (), Error = NatsError> + Send + 'static>;
 fn spawn_responder(
     client: NatsClient,

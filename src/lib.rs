@@ -96,6 +96,7 @@ extern crate native_tls;
 extern crate tokio_codec;
 extern crate tokio_executor;
 extern crate tokio_tcp;
+extern crate tokio_timer;
 extern crate tokio_tls;
 extern crate url;
 

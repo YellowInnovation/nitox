@@ -363,14 +363,15 @@ impl NatsClient {
     /// Performs a request to the server following the Request/Reply pattern. Returns a future containing the MSG that will be replied at some point by a third party
     ///
     /// Returns `impl Future<Item = Message, Error = NatsError>`
-    pub fn request(
+    fn internal_request(
         &self,
         subject: String,
         payload: Bytes,
+        mut timeout: Option<std::time::Duration>,
     ) -> impl Future<Item = Message, Error = NatsError> + Send + Sync {
         if let Some(ref server_info) = *self.server_info.read() {
             if payload.len() > server_info.max_payload as usize {
-                return Either::A(future::err(NatsError::MaxPayloadOverflow(server_info.max_payload)));
+                return Either::B(future::err(NatsError::MaxPayloadOverflow(server_info.max_payload)));
             }
         }
 
@@ -387,7 +388,8 @@ impl NatsClient {
             subject: inbox,
         };
 
-        let sid = sub_cmd.sid.clone();
+        let sid_ok = sub_cmd.sid.clone();
+        let sid_err = sub_cmd.sid.clone();
 
         let unsub_cmd = UnsubCommand {
             sid: sub_cmd.sid.clone(),
@@ -397,10 +399,11 @@ impl NatsClient {
         let tx1 = self.tx.clone();
         let tx2 = self.tx.clone();
         let rx_arc = Arc::clone(&self.rx);
+        let rx_arc_timeout = Arc::clone(&self.rx);
 
         let stream = self
             .rx
-            .for_sid(sid.clone())
+            .for_sid(sid_ok.clone())
             .inspect(|msg| debug!(target: "nitox", "Request saw msg in multiplexed stream {:#?}", msg))
             .take(1)
             .into_future()
@@ -409,16 +412,48 @@ impl NatsClient {
             .map(|(surely_message, _)| surely_message.unwrap())
             .map_err(|(e, _)| e)
             .and_then(move |msg| {
-                rx_arc.remove_sid(&sid);
+                rx_arc.remove_sid(&sid_ok);
                 future::ok(msg)
             });
 
-        Either::B(
-            self.tx
-                .send(Op::SUB(sub_cmd))
-                .and_then(move |_| tx1.send(Op::UNSUB(unsub_cmd)))
-                .and_then(move |_| tx2.send(Op::PUB(pub_cmd)))
-                .and_then(move |_| stream),
-        )
+        let fut = self
+            .tx
+            .send(Op::SUB(sub_cmd))
+            .and_then(move |_| tx1.send(Op::UNSUB(unsub_cmd)))
+            .and_then(move |_| tx2.send(Op::PUB(pub_cmd)))
+            .and_then(move |_| stream)
+            .or_else(move |e| {
+                rx_arc_timeout.remove_sid(&sid_err);
+                future::err(e)
+            });
+
+        if let Some(timeout) = timeout.take() {
+            Either::A(Either::B(tokio_timer::Timeout::new(fut, timeout).from_err()))
+        } else {
+            Either::A(Either::A(fut))
+        }
+    }
+
+    /// Performs a request to the server following the Request/Reply pattern. Returns a future containing the MSG that will be replied at some point by a third party
+    ///
+    /// Returns `impl Future<Item = Message, Error = NatsError>`
+    pub fn request(
+        &self,
+        subject: String,
+        payload: Bytes,
+    ) -> impl Future<Item = Message, Error = NatsError> + Send + Sync {
+        self.internal_request(subject, payload, None)
+    }
+
+    /// Performs a request to the server following the Request/Reply pattern. Returns a future containing the MSG that will be replied at some point by a third party
+    /// Requires a timeout after which the request will be canceled and the `Future` will resolve
+    /// Returns `impl Future<Item = Message, Error = NatsError>`
+    pub fn request_with_timeout(
+        &self,
+        subject: String,
+        payload: Bytes,
+        timeout: std::time::Duration,
+    ) -> impl Future<Item = Message, Error = NatsError> + Send + Sync {
+        self.internal_request(subject, payload, Some(timeout))
     }
 }

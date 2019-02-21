@@ -65,6 +65,8 @@ pub enum NatsError {
     /// Error thrown when a subscription is fused after reaching the maximum messages
     #[fail(display = "SubscriptionReachedMaxMsgs after {} messages", _0)]
     SubscriptionReachedMaxMsgs(u32),
+    #[fail(display = "RequestTimeoutError: The NATS request reached its configured timeout")]
+    RequestTimeoutError,
 }
 
 impl From<io::Error> for NatsError {
@@ -90,3 +92,9 @@ from_error!(::native_tls::Error, NatsError, NatsError::TlsError);
 from_error!(String, NatsError, NatsError::GenericError);
 from_error!(::url::ParseError, NatsError, NatsError::UrlParseError);
 from_error!(::std::net::AddrParseError, NatsError, NatsError::AddrParseError);
+
+impl From<::tokio_timer::timeout::Error<NatsError>> for NatsError {
+    fn from(_: ::tokio_timer::timeout::Error<NatsError>) -> Self {
+        NatsError::RequestTimeoutError
+    }
+}
