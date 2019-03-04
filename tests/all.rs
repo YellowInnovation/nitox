@@ -398,6 +398,35 @@ fn can_request_a_lot_pedantic() {
 }
 
 #[test]
+fn can_take_verbose_in_account() {
+    elog!();
+
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+
+    let connect_cmd = ConnectCommand::builder().verbose(true).build().unwrap();
+    let options = NatsClientOptions::builder()
+        .connect_command(connect_cmd)
+        .cluster_uri("127.0.0.1:4222")
+        .build()
+        .unwrap();
+
+    let connection = NatsClient::from_options(options)
+        .and_then(|client| client.connect())
+        .and_then(|client| {
+            client
+                .publish(PubCommand::builder().subject("foo").payload("bar").build().unwrap())
+                .and_then(move |_| futures::future::ok(client))
+        });
+
+    let (tx, rx) = oneshot::channel();
+    runtime.spawn(connection.then(move |r| tx.send(r).map_err(|e| panic!("Cannot send Result {:?}", e))));
+    let connection_result = rx.wait().expect("Cannot wait for a result");
+    let _ = runtime.shutdown_now().wait();
+    debug!(target: "nitox", "can_take_verbose_in_account::connection_result {:#?}", connection_result);
+    assert!(connection_result.is_ok());
+}
+
+#[test]
 fn can_pong_to_ping() {
     elog!();
     let mut runtime = tokio::runtime::Runtime::new().unwrap();

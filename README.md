@@ -1,4 +1,4 @@
-# Nitox - Tokio-based async NATS client
+# Nitox - Tokio-based async NATS / NATS Streaming Server client
 
 [![Crates.io](https://img.shields.io/crates/v/nitox.svg)](https://crates.io/crates/nitox)
 [![docs.rs](https://docs.rs/nitox/badge.svg)](https://docs.rs/nitox)
@@ -11,12 +11,12 @@ A lot of features are currently missing, so feel free to contribute and help us 
 
 Missing features:
 
-- [x] Find a way to integration test the reconnection mechanism - but it has actually been hand-tested and works
-- [x] Auto-pruning of subscriptions being unsubscribed after X messages - It's actually a bug, since a stream stays open albeit sleeping
+- [x] Find a way to integration test the reconnection mechanism - The 10M requests integration test provokes a slow consumer and a disconnection, which is handled well
+- [x] Auto-pruning of subscriptions being unsubscribed after X messages
 - [ ] Handle verbose mode
 - [x] Handle pedantic mode - Should work OOB since we're closely following the protocol (Edit: it does)
-- [ ] Switch parsing to using `nom` - We're not sure we can handle very weird clients; we're fine talking to official ones right now
-- [ ] Add support for NATS Streaming Server - Should be pretty easy with `prost` since we already have the async architecture going on
+- [x] Switch parsing to using `nom` - well, our parser is speedy/robust enough so I don't think it's worth the effort
+- [x] Add support for NATS Streaming Server - Available under the `nats-streaming` feature flag!
 
 *There's a small extra in the `tests/` folder, some of our integration tests rely on a custom NATS server implemented with `tokio` that only implements a subset of the protocol to fit our needs for the integration testing.*
 
@@ -28,7 +28,14 @@ Here: [http://docs.rs/nitox](http://docs.rs/nitox)
 
 ```toml
 [dependencies]
-nitox = "0.1"
+nitox = "0.2"
+```
+
+With NATS Streaming Server support enabled
+
+```toml
+[dependencies]
+nitox = { version = "0.2", features = ["nats-streaming"] }
 ```
 
 ## Usage
@@ -37,7 +44,7 @@ nitox = "0.1"
 extern crate nitox;
 extern crate futures;
 use futures::{prelude::*, future};
-use nitox::{NatsClient, NatsClientOptions, NatsError, commands::*};
+use nitox::{NatsClient, NatsClientOptions, NatsError, commands::*, streaming::*};
 
 fn connect_to_nats() -> impl Future<Item = NatsClient, Error = NatsError> {
     // Defaults as recommended per-spec, but you can customize them
@@ -56,6 +63,10 @@ fn connect_to_nats() -> impl Future<Item = NatsClient, Error = NatsError> {
         .and_then(|client| {
             // Client has sent its CONNECT command and is ready for usage
             future::ok(client)
+        })
+        .and_then(|client| {
+            // Also, you can switch to NATS Streaming Server client seamlessly
+            future::ok(NatsStreamingClient::from(client))
         })
 }
 ```

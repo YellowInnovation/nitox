@@ -23,6 +23,14 @@ name = "nitox"
 readme = "README.md"
 repository = "https://github.com/YellowInnovation/nitox"
 version = "0.1.10"
+build = "build.rs"
+
+[package.metadata.docs.rs]
+features = ["nats-streaming"]
+
+[features]
+default = ["nats-streaming"]
+nats-streaming = ["prost", "prost-derive", "prost-build"]
 
 [[bench]]
 harness = false
@@ -45,6 +53,8 @@ tokio-executor = "0.1"
 tokio-tcp = "0.1"
 tokio-tls = "0.2"
 url = "1.7"
+prost = { version = "0.4", optional = true }
+prost-derive = { version = "0.4", optional = true }
 
 [dependencies.serde_json]
 features = ["preserve_order"]
@@ -54,6 +64,9 @@ version = "1.0"
 criterion = "0.2"
 env_logger = "0.6"
 tokio = "0.1"
+
+[build-dependencies]
+prost-build = { version = "0.4", optional = true }
 
 [[example]]
 name = "request_with_reply"

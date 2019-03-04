@@ -3,13 +3,11 @@ use bytes::Bytes;
 use futures::{
     future::{self, Either},
     prelude::*,
-    stream,
     sync::mpsc,
     Future,
 };
 use parking_lot::RwLock;
 use std::{
-    collections::HashMap,
     net::{SocketAddr, ToSocketAddrs},
     str::FromStr,
     sync::Arc,
@@ -17,123 +15,10 @@ use std::{
 use tokio_executor;
 use url::Url;
 
+use super::{AckTrigger, NatsClientMultiplexer, NatsClientSender, NatsSink, NatsStream};
 use error::NatsError;
 use net::*;
 use protocol::{commands::*, Op};
-
-/// Sink (write) part of a TCP stream
-type NatsSink = stream::SplitSink<NatsConnection>;
-/// Stream (read) part of a TCP stream
-type NatsStream = stream::SplitStream<NatsConnection>;
-/// Useless pretty much, just for code semantics
-type NatsSubscriptionId = String;
-
-/// Keep-alive for the sink, also supposed to take care of handling verbose messaging, but can't for now
-#[derive(Clone, Debug)]
-struct NatsClientSender {
-    tx: mpsc::UnboundedSender<Op>,
-    verbose: bool,
-}
-
-impl NatsClientSender {
-    pub fn new(sink: NatsSink) -> Self {
-        let (tx, rx) = mpsc::unbounded();
-        let rx = rx.map_err(|_| NatsError::InnerBrokenChain);
-        let work = sink.send_all(rx).map(|_| ()).map_err(|_| ());
-        tokio_executor::spawn(work);
-
-        NatsClientSender { tx, verbose: false }
-    }
-
-    #[allow(dead_code)]
-    pub fn set_verbose(&mut self, verbose: bool) {
-        self.verbose = verbose;
-    }
-
-    /// Sends an OP to the server
-    pub fn send(&self, op: Op) -> impl Future<Item = (), Error = NatsError> {
-        //let _verbose = self.verbose.clone();
-        self.tx
-            .unbounded_send(op)
-            .map_err(|_| NatsError::InnerBrokenChain)
-            .into_future()
-    }
-}
-
-#[derive(Debug)]
-struct SubscriptionSink {
-    tx: mpsc::UnboundedSender<Message>,
-    max_count: Option<u32>,
-    count: u32,
-}
-
-/// Internal multiplexer for incoming streams and subscriptions. Quite a piece of code, with almost no overhead yay
-#[derive(Debug)]
-struct NatsClientMultiplexer {
-    other_tx: Arc<mpsc::UnboundedSender<Op>>,
-    subs_tx: Arc<RwLock<HashMap<NatsSubscriptionId, SubscriptionSink>>>,
-}
-
-impl NatsClientMultiplexer {
-    pub fn new(stream: NatsStream) -> (Self, mpsc::UnboundedReceiver<Op>) {
-        let subs_tx: Arc<RwLock<HashMap<NatsSubscriptionId, SubscriptionSink>>> =
-            Arc::new(RwLock::new(HashMap::default()));
-
-        let (other_tx, other_rx) = mpsc::unbounded();
-        let other_tx = Arc::new(other_tx);
-
-        let stx_inner = Arc::clone(&subs_tx);
-        let otx_inner = Arc::clone(&other_tx);
-
-        // Here we filter the incoming TCP stream Messages by subscription ID and sending it to the appropriate Sender
-        let work_tx = stream
-            .for_each(move |op| {
-                match op {
-                    Op::MSG(msg) => {
-                        debug!(target: "nitox", "Found MSG from global Stream {:?}", msg);
-                        if let Some(s) = (*stx_inner.read()).get(&msg.sid) {
-                            debug!(target: "nitox", "Found multiplexed receiver to send to {}", msg.sid);
-                            let _ = s.tx.unbounded_send(msg);
-                        }
-                    }
-                    // Forward the rest of the messages to the owning client
-                    op => {
-                        debug!(target: "nitox", "Sending OP to the rest of the queue: {:?}", op);
-                        let _ = otx_inner.unbounded_send(op);
-                    }
-                }
-
-                future::ok::<(), NatsError>(())
-            })
-            .map(|_| ())
-            .map_err(|_| ());
-
-        tokio_executor::spawn(work_tx);
-
-        (NatsClientMultiplexer { subs_tx, other_tx }, other_rx)
-    }
-
-    pub fn for_sid(&self, sid: NatsSubscriptionId) -> impl Stream<Item = Message, Error = NatsError> + Send + Sync {
-        let (tx, rx) = mpsc::unbounded();
-        (*self.subs_tx.write()).insert(
-            sid,
-            SubscriptionSink {
-                tx,
-                max_count: None,
-                count: 0,
-            },
-        );
-
-        rx.map_err(|_| NatsError::InnerBrokenChain)
-    }
-
-    pub fn remove_sid(&self, sid: &str) {
-        if let Some(mut tx) = (*self.subs_tx.write()).remove(sid) {
-            let _ = tx.tx.close();
-            drop(tx);
-        }
-    }
-}
 
 /// Options that are to be given to the client for initialization
 #[derive(Debug, Default, Clone, Builder)]
@@ -155,7 +40,7 @@ impl NatsClientOptions {
 /// the system messages that are forwarded on the `Stream` that the client implements
 pub struct NatsClient {
     /// Backup of options
-    opts: NatsClientOptions,
+    pub(crate) opts: NatsClientOptions,
     /// Server info
     server_info: Arc<RwLock<Option<ServerInfo>>>,
     /// Stream of the messages that are not caught for subscriptions (only system messages like PING/PONG should be here)
@@ -188,8 +73,6 @@ impl Stream for NatsClient {
 
 impl NatsClient {
     /// Creates a client and initiates a connection to the server
-    ///
-    /// Returns `impl Future<Item = Self, Error = NatsError>`
     pub fn from_options(opts: NatsClientOptions) -> impl Future<Item = Self, Error = NatsError> + Send + Sync {
         let tls_required = opts.connect_command.tls_required;
 
@@ -222,7 +105,11 @@ impl NatsClient {
             .and_then(move |connection| {
                 let (sink, stream): (NatsSink, NatsStream) = connection.split();
                 let (rx, other_rx) = NatsClientMultiplexer::new(stream);
-                let tx = NatsClientSender::new(sink);
+
+                let is_verbose = opts.connect_command.verbose;
+                let trigger = AckTrigger::from(is_verbose);
+                let mut tx = NatsClientSender::new(sink, trigger.clone());
+                tx.set_verbose(is_verbose);
 
                 let (tmp_other_tx, tmp_other_rx) = mpsc::unbounded();
                 let tx_inner = tx.clone();
@@ -239,13 +126,26 @@ impl NatsClient {
                 tokio_executor::spawn(
                     other_rx
                         .for_each(move |op| {
+                            debug!(target: "nitox", "Got rest OP from multiplexer: {:?}", op);
                             match op {
                                 Op::PING => {
+                                    debug!(target: "nitox", "Got PING +PING");
                                     tokio_executor::spawn(tx_inner.send(Op::PONG).map_err(|_| ()));
                                     let _ = tmp_other_tx.unbounded_send(op);
                                 }
                                 Op::INFO(server_info) => {
+                                    debug!(target: "nitox", "Got server info");
                                     *server_info_arc.write() = Some(server_info);
+                                }
+                                Op::OK => {
+                                    debug!(target: "nitox", "Got verbose ack +OK");
+                                    if is_verbose {
+                                        debug!(target: "nitox", "Verbose mode is enabled, pulling up trigger");
+                                        trigger.pull_up();
+                                        debug!(target: "nitox", "Verbose mode trigger is pulled up");
+                                    } else {
+                                        debug!(target: "nitox", "Verbose mode is NOT enabled, that's weird");
+                                    }
                                 }
                                 op => {
                                     let _ = tmp_other_tx.unbounded_send(op);
@@ -263,28 +163,13 @@ impl NatsClient {
     }
 
     /// Sends the CONNECT command to the server to setup connection
-    ///
-    /// Returns `impl Future<Item = Self, Error = NatsError>`
     pub fn connect(self) -> impl Future<Item = Self, Error = NatsError> + Send + Sync {
         self.tx
             .send(Op::CONNECT(self.opts.connect_command.clone()))
             .and_then(move |_| future::ok(self))
     }
 
-    /// Send a raw command to the server
-    ///
-    /// Returns `impl Future<Item = Self, Error = NatsError>`
-    #[deprecated(
-        since = "0.1.4",
-        note = "Using this method prevents the library to track what you are sending to the server and causes memory leaks in case of subscriptions/unsubs, it'll be fully removed in v0.2.0"
-    )]
-    pub fn send(self, op: Op) -> impl Future<Item = Self, Error = NatsError> {
-        self.tx.send(op).and_then(move |_| future::ok(self))
-    }
-
     /// Send a PUB command to the server
-    ///
-    /// Returns `impl Future<Item = (), Error = NatsError>`
     pub fn publish(&self, cmd: PubCommand) -> impl Future<Item = (), Error = NatsError> + Send + Sync {
         if let Some(ref server_info) = *self.server_info.read() {
             if cmd.payload.len() > server_info.max_payload as usize {
@@ -296,8 +181,6 @@ impl NatsClient {
     }
 
     /// Send a UNSUB command to the server and de-register stream in the multiplexer
-    ///
-    /// Returns `impl Future<Item = (), Error = NatsError>`
     pub fn unsubscribe(&self, cmd: UnsubCommand) -> impl Future<Item = (), Error = NatsError> + Send + Sync {
         let mut unsub_now = true;
         if let Some(max) = cmd.max_msgs {
@@ -320,8 +203,6 @@ impl NatsClient {
     }
 
     /// Send a SUB command and register subscription stream in the multiplexer and return that `Stream` in a future
-    ///
-    /// Returns `impl Future<Item = impl Stream<Item = Message, Error = NatsError>>`
     pub fn subscribe(
         &self,
         cmd: SubCommand,
@@ -361,8 +242,6 @@ impl NatsClient {
     }
 
     /// Performs a request to the server following the Request/Reply pattern. Returns a future containing the MSG that will be replied at some point by a third party
-    ///
-    /// Returns `impl Future<Item = Message, Error = NatsError>`
     pub fn request(
         &self,
         subject: String,
