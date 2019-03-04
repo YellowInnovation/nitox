@@ -9,7 +9,7 @@ use tokio_executor;
 use error::NatsError;
 use protocol::Op;
 
-use super::connection_inner::NatsConnectionInner;
+use super::{NatsClientTlsConfig, connection_inner::NatsConnectionInner};
 
 macro_rules! reco {
     ($conn:ident) => {
@@ -39,6 +39,8 @@ pub struct NatsConnection {
     pub(crate) addr: SocketAddr,
     /// Host of the server; Only used if connecting to a TLS-enabled server
     pub(crate) host: Option<String>,
+    /// TLS config for client verification; Only used if configured previously
+    pub(crate) tls_config: NatsClientTlsConfig,
     /// Inner dual `Stream`/`Sink` of the TCP connection
     pub(crate) inner: Arc<RwLock<NatsConnectionInner>>,
     /// Current state of the connection
@@ -55,12 +57,13 @@ impl NatsConnection {
         let inner_state = Arc::clone(&self.state);
         let is_tls = self.is_tls;
         let maybe_host = self.host.clone();
+        let tls_config = self.tls_config.clone();
         NatsConnectionInner::connect_tcp(&self.addr)
             .and_then(move |socket| {
                 if is_tls {
                     Either::A(
                         // This unwrap is safe because the value would always be present if `is_tls` is true
-                        NatsConnectionInner::upgrade_tcp_to_tls(&maybe_host.unwrap(), socket)
+                        NatsConnectionInner::upgrade_tcp_to_tls(&maybe_host.unwrap(), socket, tls_config)
                             .map(NatsConnectionInner::from),
                     )
                 } else {

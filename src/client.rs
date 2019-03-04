@@ -15,11 +15,12 @@ use std::{
     sync::Arc,
 };
 use tokio_executor;
-use url::Url;
 
 use error::NatsError;
 use net::*;
 use protocol::{commands::*, Op};
+
+pub use net::NatsClientTlsConfig;
 
 /// Sink (write) part of a TCP stream
 type NatsSink = stream::SplitSink<NatsConnection>;
@@ -139,6 +140,9 @@ pub struct NatsClientOptions {
     pub connect_command: ConnectCommand,
     /// Cluster URI in the IP:PORT format
     pub cluster_uri: String,
+    /// TLS configuration for this client.
+    #[builder(default)]
+    pub tls_config: NatsClientTlsConfig,
 }
 
 impl NatsClientOptions {
@@ -187,8 +191,10 @@ impl NatsClient {
     ///
     /// Returns `impl Future<Item = Self, Error = NatsError>`
     pub fn from_options(opts: NatsClientOptions) -> impl Future<Item = Self, Error = NatsError> + Send + Sync {
-        let tls_required = opts.connect_command.tls_required;
+        let tls_required = opts.connect_command.tls_required
+            || opts.tls_config.identity.is_some() || opts.tls_config.root_cert.is_some();
 
+        let tls_config = opts.tls_config.clone();
         let cluster_uri = opts.cluster_uri.clone();
         let cluster_sa = if let Ok(sockaddr) = SocketAddr::from_str(&cluster_uri) {
             Ok(sockaddr)
@@ -203,13 +209,7 @@ impl NatsClient {
             .from_err()
             .and_then(move |cluster_sa| {
                 if tls_required {
-                    match Url::parse(&cluster_uri) {
-                        Ok(url) => match url.host_str() {
-                            Some(host) => future::ok(Either::B(connect_tls(host.to_string(), cluster_sa))),
-                            None => future::err(NatsError::TlsHostMissingError),
-                        },
-                        Err(e) => future::err(e.into()),
-                    }
+                    future::ok(Either::B(connect_tls(cluster_uri, cluster_sa, tls_config)))
                 } else {
                     future::ok(Either::A(connect(cluster_sa)))
                 }

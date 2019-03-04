@@ -1,3 +1,4 @@
+use super::NatsClientTlsConfig;
 use codec::OpCodec;
 use futures::prelude::*;
 use native_tls::TlsConnector as NativeTlsConnector;
@@ -29,8 +30,18 @@ impl NatsConnectionInner {
     pub(crate) fn upgrade_tcp_to_tls(
         host: &str,
         socket: TcpStream,
+        config: NatsClientTlsConfig,
     ) -> impl Future<Item = TlsStream<TcpStream>, Error = NatsError> {
-        let tls_connector = NativeTlsConnector::builder().build().unwrap();
+        let mut builder = NativeTlsConnector::builder();
+        if let Some(i) = config.identity().unwrap() {
+            builder.identity(i);
+        }
+
+        if let Some(c) = config.root_cert().unwrap() {
+            builder.add_root_certificate(c);
+        }
+
+        let tls_connector = builder.build().unwrap();
         let tls_stream: TlsConnector = tls_connector.into();
         debug!(target: "nitox", "Connecting to {} through TLS over TCP", host);
         tls_stream.connect(&host, socket).from_err()
