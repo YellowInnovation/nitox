@@ -74,6 +74,7 @@ pub(crate) fn connect(addr: SocketAddr) -> impl Future<Item = NatsConnection, Er
             is_tls: false,
             tls_config: Default::default(),
             addr,
+            first_op: None,
             host: None,
             state: Arc::new(RwLock::new(NatsConnectionState::Connected)),
             inner: Arc::new(RwLock::new(socket.into())),
@@ -85,15 +86,13 @@ pub(crate) fn connect(addr: SocketAddr) -> impl Future<Item = NatsConnection, Er
 pub(crate) fn connect_tls(host: String, addr: SocketAddr, tls_config: NatsClientTlsConfig) -> impl Future<Item = NatsConnection, Error = NatsError> {
     let inner_host = host.clone();
     let inner_config = tls_config.clone();
-    NatsConnectionInner::connect_tcp(&addr)
-        .and_then(move |socket| {
-            debug!(target: "nitox", "Connected through TCP, upgrading to TLS");
-            NatsConnectionInner::upgrade_tcp_to_tls(&host, socket, tls_config)
-        }).map(move |socket| {
-            debug!(target: "nitox", "Connected through TCP over TLS");
+    NatsConnectionInner::connect_and_upgrade_if_required(Some(host), &addr, tls_config)
+        .map(move |socket| {
+            debug!(target: "nitox", "Connected through TLS");
             NatsConnection {
                 is_tls: true,
                 tls_config: inner_config,
+                first_op: socket.first_op(),
                 addr,
                 host: Some(inner_host),
                 state: Arc::new(RwLock::new(NatsConnectionState::Connected)),

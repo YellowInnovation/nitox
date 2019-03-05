@@ -15,6 +15,7 @@ use std::{
     sync::Arc,
 };
 use tokio_executor;
+use url::Url;
 
 use error::NatsError;
 use net::*;
@@ -209,12 +210,25 @@ impl NatsClient {
             .from_err()
             .and_then(move |cluster_sa| {
                 if tls_required {
-                    future::ok(Either::B(connect_tls(cluster_uri, cluster_sa, tls_config)))
+                    match Url::parse(&format!("nats://{}", cluster_uri)) {
+                        Ok(url) => match url.host_str() {
+                            Some(host) => future::ok(Either::B(connect_tls(host.to_owned(), cluster_sa, tls_config))),
+                            None => future::err(NatsError::TlsHostMissingError),
+                        },
+                        Err(e) => future::err(e.into()),
+                    }
                 } else {
                     future::ok(Either::A(connect(cluster_sa)))
                 }
-            }).and_then(|either| either)
-            .and_then(move |connection| {
+            }).and_then(|either| either).and_then(move |mut connection| {
+                let server_info = connection.first_op.take().and_then(|op| match op {
+                    Op::INFO(i) => Some(i),
+                    _ => {
+                        debug!(target: "nitox", "First op is not INFO? ({:?})", op);
+                        None
+                    },
+                });
+
                 let (sink, stream): (NatsSink, NatsStream) = connection.split();
                 let (rx, other_rx) = NatsClientMultiplexer::new(stream);
                 let tx = NatsClientSender::new(sink);
@@ -223,7 +237,7 @@ impl NatsClient {
                 let tx_inner = tx.clone();
                 let client = NatsClient {
                     tx,
-                    server_info: Arc::new(RwLock::new(None)),
+                    server_info: Arc::new(RwLock::new(server_info)),
                     other_rx: Box::new(tmp_other_rx.map_err(|_| NatsError::InnerBrokenChain)),
                     rx: Arc::new(rx),
                     opts,

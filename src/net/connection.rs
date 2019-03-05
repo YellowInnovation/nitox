@@ -1,7 +1,4 @@
-use futures::{
-    future::{self, Either},
-    prelude::*,
-};
+use futures::prelude::*;
 use parking_lot::RwLock;
 use std::{net::SocketAddr, sync::Arc};
 use tokio_executor;
@@ -39,6 +36,10 @@ pub struct NatsConnection {
     pub(crate) addr: SocketAddr,
     /// Host of the server; Only used if connecting to a TLS-enabled server
     pub(crate) host: Option<String>,
+    /// First message sent by the server. This is always `INFO` (until proven otherwise)
+    /// and it's stored only during TLS connections, because we have to parse the first message
+    /// before upgrading the connection.
+    pub(crate) first_op: Option<Op>,
     /// TLS config for client verification; Only used if configured previously
     pub(crate) tls_config: NatsClientTlsConfig,
     /// Inner dual `Stream`/`Sink` of the TCP connection
@@ -55,21 +56,10 @@ impl NatsConnection {
 
         let inner_arc = Arc::clone(&self.inner);
         let inner_state = Arc::clone(&self.state);
-        let is_tls = self.is_tls;
         let maybe_host = self.host.clone();
         let tls_config = self.tls_config.clone();
-        NatsConnectionInner::connect_tcp(&self.addr)
-            .and_then(move |socket| {
-                if is_tls {
-                    Either::A(
-                        // This unwrap is safe because the value would always be present if `is_tls` is true
-                        NatsConnectionInner::upgrade_tcp_to_tls(&maybe_host.unwrap(), socket, tls_config)
-                            .map(NatsConnectionInner::from),
-                    )
-                } else {
-                    Either::B(future::ok(NatsConnectionInner::from(socket)))
-                }
-            }).and_then(move |inner| {
+        NatsConnectionInner::connect_and_upgrade_if_required(maybe_host, &self.addr, tls_config)
+            .and_then(move |inner| {
                 {
                     *inner_arc.write() = inner;
                     *inner_state.write() = NatsConnectionState::Connected;
