@@ -339,7 +339,7 @@ fn spawn_responder(
     Box::new(future::ok(()))
 }
 
-const ROUNDTRIP_COUNT: usize = 1_000_000;
+const ROUNDTRIP_COUNT: usize = 300_000;
 
 #[test]
 fn can_request_a_lot() {
@@ -402,7 +402,7 @@ fn can_request_a_lot_pedantic() {
         .and_then(|client| {
             let mut fut_vec = vec![];
 
-            for _ in 0..ROUNDTRIP_COUNT / 100 {
+            for _ in 0..ROUNDTRIP_COUNT {
                 fut_vec.push(client.request("foo-requests".into(), "foo".into()).map_err(|_| ()));
             }
 
