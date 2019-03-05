@@ -5,7 +5,7 @@ workflow "Build and test on push" {
 
 action "Build Nitox" {
   uses = "actions/docker/cli@76ff57a"
-  args = "build . -t yellowinnovation/nitox -f .github/docker/Dockerfile"
+  args = "build . -t yellowinnovation/nitox -f github-actions.Dockerfile"
 }
 
 action "NATS" {
