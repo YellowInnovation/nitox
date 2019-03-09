@@ -21,6 +21,8 @@ use error::NatsError;
 use net::*;
 use protocol::{commands::*, Op};
 
+pub use net::NatsClientTlsConfig;
+
 /// Sink (write) part of a TCP stream
 type NatsSink = stream::SplitSink<NatsConnection>;
 /// Stream (read) part of a TCP stream
@@ -139,6 +141,9 @@ pub struct NatsClientOptions {
     pub connect_command: ConnectCommand,
     /// Cluster URI in the IP:PORT format
     pub cluster_uri: String,
+    /// TLS configuration for this client.
+    #[builder(default)]
+    pub tls_config: NatsClientTlsConfig,
 }
 
 impl NatsClientOptions {
@@ -187,8 +192,10 @@ impl NatsClient {
     ///
     /// Returns `impl Future<Item = Self, Error = NatsError>`
     pub fn from_options(opts: NatsClientOptions) -> impl Future<Item = Self, Error = NatsError> + Send + Sync {
-        let tls_required = opts.connect_command.tls_required;
+        let tls_required = opts.connect_command.tls_required
+            || opts.tls_config.identity.is_some() || opts.tls_config.root_cert.is_some();
 
+        let tls_config = opts.tls_config.clone();
         let cluster_uri = opts.cluster_uri.clone();
         let cluster_sa = if let Ok(sockaddr) = SocketAddr::from_str(&cluster_uri) {
             Ok(sockaddr)
@@ -203,9 +210,9 @@ impl NatsClient {
             .from_err()
             .and_then(move |cluster_sa| {
                 if tls_required {
-                    match Url::parse(&cluster_uri) {
+                    match Url::parse(&format!("nats://{}", cluster_uri)) {
                         Ok(url) => match url.host_str() {
-                            Some(host) => future::ok(Either::B(connect_tls(host.to_string(), cluster_sa))),
+                            Some(host) => future::ok(Either::B(connect_tls(host.to_owned(), cluster_sa, tls_config))),
                             None => future::err(NatsError::TlsHostMissingError),
                         },
                         Err(e) => future::err(e.into()),
@@ -213,8 +220,15 @@ impl NatsClient {
                 } else {
                     future::ok(Either::A(connect(cluster_sa)))
                 }
-            }).and_then(|either| either)
-            .and_then(move |connection| {
+            }).and_then(|either| either).and_then(move |mut connection| {
+                let server_info = connection.first_op.take().and_then(|op| match op {
+                    Op::INFO(i) => Some(i),
+                    _ => {
+                        debug!(target: "nitox", "First op is not INFO? ({:?})", op);
+                        None
+                    },
+                });
+
                 let (sink, stream): (NatsSink, NatsStream) = connection.split();
                 let (rx, other_rx) = NatsClientMultiplexer::new(stream);
                 let tx = NatsClientSender::new(sink);
@@ -223,7 +237,7 @@ impl NatsClient {
                 let tx_inner = tx.clone();
                 let client = NatsClient {
                     tx,
-                    server_info: Arc::new(RwLock::new(None)),
+                    server_info: Arc::new(RwLock::new(server_info)),
                     other_rx: Box::new(tmp_other_rx.map_err(|_| NatsError::InnerBrokenChain)),
                     rx: Arc::new(rx),
                     opts,
