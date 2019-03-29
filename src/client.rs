@@ -226,7 +226,7 @@ impl NatsClient {
                 if tls_required {
                     match Url::parse(&cluster_uri) {
                         Ok(url) => match url.host_str() {
-                            Some(host) => future::ok(Either::B(connect_tls(host.to_string(), cluster_sa))),
+                            Some(host) => future::ok(Either::B(connect_tls(host.to_string(), cluster_sa, None))),
                             None => future::err(NatsError::TlsHostMissingError),
                         },
                         Err(e) => future::err(e.into()),
