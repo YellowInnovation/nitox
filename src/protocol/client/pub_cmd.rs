@@ -26,7 +26,7 @@ impl PubCommand {
 
     /// Generates a random `reply_to` `String`
     pub fn generate_reply_to() -> String {
-        let mut rng = thread_rng();
+        let rng = thread_rng();
         rng.sample_iter(&Alphanumeric).take(16).collect()
     }
 }
