@@ -23,7 +23,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --verbose
+          args: --release --verbose
       - name: Create Nats Server
         uses: onichandame/nats-action@0.0.0
         with:
@@ -32,4 +32,4 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --verbose
+          args: --release --verbose
