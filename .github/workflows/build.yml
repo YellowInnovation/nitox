@@ -1,0 +1,35 @@
+name: Build & Test Nitox
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+        fail-fast: true
+
+    steps:
+      - uses: actions/checkout@v1
+      - name: Dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y libudev-dev
+      - name: Install minimal stable with clippy and rustfmt
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Run build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --verbose
+      - name: Create Nats Server
+        uses: onichandame/nats-action@0.0.0
+        with:
+          port: "4222"
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --verbose
